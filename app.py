@@ -24,5 +24,5 @@ def webhook():
     print(data)
     return "ok", 200
 
-if _name_ == "__main__":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
