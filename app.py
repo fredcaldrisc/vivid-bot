@@ -1,7 +1,7 @@
 from flask import Flask, request
 import os
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "vivid_verify_token")
 
