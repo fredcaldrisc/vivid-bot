@@ -164,6 +164,14 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
         ("WHATSAPP_PHONE_NUMBER_ID", settings.phone_number_id),
         ("APP_SECRET", settings.app_secret if settings.require_signature else "ok"),
     ] if not value]
+    if settings.whatsapp_token:
+        # Never log the token itself; length and prefix are enough to spot a wrong paste.
+        log.info(
+            "WhatsApp token loaded: %d characters, %s",
+            len(settings.whatsapp_token),
+            "looks like a Meta token (starts with EAA)" if settings.whatsapp_token.startswith("EAA")
+            else "does NOT start with EAA, so it is probably not a Meta access token",
+        )
     if missing:
         log.error("Missing settings: %s. VIVID cannot receive or send WhatsApp messages until they are set.", ", ".join(missing))
 

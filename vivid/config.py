@@ -10,6 +10,14 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_DIR / ".env")
 
 
+def _secret(name: str) -> str:
+    """Reads a token, forgiving common paste mistakes: spaces, line breaks, quotes, 'Bearer '."""
+    value = "".join(os.environ.get(name, "").split()).strip("\"'")
+    if value.lower().startswith("bearer"):
+        value = value[len("bearer"):]
+    return value
+
+
 def _bool(name: str, default: str) -> bool:
     return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -19,7 +27,7 @@ class Settings:
     # Meta / WhatsApp Cloud API
     verify_token: str = field(default_factory=lambda: os.environ.get("VERIFY_TOKEN", ""))
     app_secret: str = field(default_factory=lambda: os.environ.get("APP_SECRET", ""))
-    whatsapp_token: str = field(default_factory=lambda: os.environ.get("WHATSAPP_TOKEN", ""))
+    whatsapp_token: str = field(default_factory=lambda: _secret("WHATSAPP_TOKEN"))
     # PHONE_NUMBER_ID is the name the first version of the bot used on Render.
     phone_number_id: str = field(
         default_factory=lambda: os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or os.environ.get("PHONE_NUMBER_ID", "")
