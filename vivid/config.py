@@ -11,8 +11,10 @@ load_dotenv(PROJECT_DIR / ".env")
 
 
 def _secret(name: str) -> str:
-    """Reads a token, forgiving common paste mistakes: spaces, line breaks, quotes, 'Bearer '."""
-    value = "".join(os.environ.get(name, "").split()).strip("\"'")
+    """Reads a token, forgiving common paste mistakes: spaces, line breaks, quotes, 'Bearer ',
+    and invisible characters (zero-width spaces, byte-order marks) that copying from web pages adds."""
+    raw = os.environ.get(name, "")
+    value = "".join(c for c in raw if c.isascii() and c.isprintable() and not c.isspace()).strip("\"'")
     if value.lower().startswith("bearer"):
         value = value[len("bearer"):]
     return value
