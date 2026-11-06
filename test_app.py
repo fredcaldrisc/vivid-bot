@@ -348,3 +348,18 @@ def test_admin_can_grant_subscription(env):
     r = client.post("/admin/subscribers", json={"phone": "+233 24 123 4567", "days": 7}, headers={"X-Admin-Token": "admin-token"})
     assert r.status_code == 200 and r.get_json()["phone"] == PHONE
     assert bot.is_subscribed(bot.db.get_user(PHONE))
+
+
+def test_missing_disk_falls_back_instead_of_crashing(tmp_path, monkeypatch):
+    import app as app_module
+
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("a file where the disk folder should be")
+    fallback = tmp_path / "fallback"
+    monkeypatch.setattr(app_module, "FALLBACK_DATA_DIR", fallback)
+    settings = Settings(
+        database_path=str(blocker / "vivid.db"), audio_dir=str(blocker / "audio"), run_scheduler=False,
+    )
+    bot = app_module.build_bot(settings)
+    assert bot.audio_dir == fallback / "audio"
+    assert (fallback / "vivid.db").exists()

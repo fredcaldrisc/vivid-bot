@@ -8,6 +8,7 @@ import hmac
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from flask import Flask, jsonify, request
 
@@ -26,10 +27,40 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime
 log = logging.getLogger("vivid")
 
 
+FALLBACK_DATA_DIR = Path(__file__).resolve().parent / "data"
+
+
+def usable_dir(directory: Path, purpose: str) -> Path:
+    """Returns `directory` if it can be written to; otherwise the project's own data/ folder.
+
+    On Render, /var/data only exists once a persistent disk is mounted there. Without the
+    disk VIVID still starts, but everything it stores is lost on the next deploy or restart.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".write-test"
+        probe.write_text("ok")
+        probe.unlink()
+        return directory
+    except OSError as exc:
+        log.error(
+            "Cannot write %s to %s (%s). Using %s instead. THIS STORAGE IS TEMPORARY: "
+            "reminders and voice notes will be lost on the next deploy. Add a persistent disk "
+            "mounted at %s.", purpose, directory, exc, FALLBACK_DATA_DIR, directory,
+        )
+        FALLBACK_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return FALLBACK_DATA_DIR
+
+
 def build_bot(settings: Settings) -> VividBot:
     callback = f"{settings.public_base_url.rstrip('/')}/paid" if settings.public_base_url else ""
+    db_path = Path(settings.database_path)
+    db_path = usable_dir(db_path.parent, "the database") / db_path.name
+    audio_dir = usable_dir(Path(settings.audio_dir), "voice notes")
+    if audio_dir == FALLBACK_DATA_DIR:
+        audio_dir = FALLBACK_DATA_DIR / "audio"
     return VividBot(
-        db=Database(settings.database_path),
+        db=Database(str(db_path)),
         whatsapp=WhatsApp(settings.whatsapp_token, settings.phone_number_id, settings.graph_version),
         ai=ReminderAI(settings.anthropic_model),
         transcriber=Transcriber(settings.asr_url, settings.asr_key),
@@ -38,7 +69,7 @@ def build_bot(settings: Settings) -> VividBot:
         sms_fallback_minutes=settings.sms_fallback_minutes,
         missed_after_minutes=settings.missed_after_minutes,
         tz=settings.timezone,
-        audio_dir=settings.audio_dir,
+        audio_dir=str(audio_dir),
         template_name=settings.reminder_template,
         template_lang=settings.reminder_template_lang,
         subscription_days=settings.subscription_days,
