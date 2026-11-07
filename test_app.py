@@ -446,3 +446,41 @@ def test_owner_numbers_have_access_without_subscription(tmp_path):
 def test_owner_numbers_setting_is_parsed(monkeypatch):
     monkeypatch.setenv("OWNER_NUMBERS", "+233 54 753 9948, 233201234567")
     assert Settings().owner_numbers == {"233547539948", "233201234567"}
+
+
+def test_website_pages_show_price_from_settings_and_whatsapp_link(tmp_path, monkeypatch):
+    monkeypatch.setenv("WHATSAPP_PUBLIC_NUMBER", "+233 20 123 4567")
+    bot = VividBot(
+        db=Database(str(tmp_path / "t.db")), whatsapp=FakeWhatsApp(), ai=FakeAI(), transcriber=FakeASR(),
+        payments=Paystack("sk_test_secret", 2550), sms=FakeSMS(), audio_dir=str(tmp_path / "audio"),
+    )
+    settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, price_pesewas=2550,
+                        subscription_days=14, database_path=str(tmp_path / "unused.db"))
+    client = create_app(settings, bot=bot, run_async=False).test_client()
+
+    home = client.get("/").get_data(as_text=True)
+    assert "English or Twi" in home and "GHS 25.50" in home and "14 days" in home
+    assert "https://wa.me/233201234567?text=" in home
+    for link in ("/how-it-works", "/pricing", "/privacy", "/terms", "/data-deletion"):
+        assert f'href="{link}"' in home
+
+    pricing = client.get("/pricing").get_data(as_text=True)
+    assert "GHS 25.50" in pricing and "for 14 days" in pricing and "wa.me/233201234567" in pricing
+    how = client.get("/how-it-works").get_data(as_text=True)
+    assert "vivid description" in how and "SMS" in how and "Missed" in how
+
+
+def test_website_uses_test_number_until_public_number_is_set(env, monkeypatch):
+    client, _, _ = env
+    monkeypatch.delenv("WHATSAPP_PUBLIC_NUMBER", raising=False)
+    assert "https://wa.me/15552049961?text=Hi%20VIVID" in client.get("/").get_data(as_text=True)
+    assert "GHS 20</p>" in client.get("/pricing").get_data(as_text=True)
+
+
+def test_logo_files_are_served(env):
+    client, _, _ = env
+    for path in ("/logo.png", "/logo-256.png", "/logo-64.png", "/favicon.ico"):
+        response = client.get(path)
+        assert response.status_code == 200 and response.data[:8] == b"\x89PNG\r\n\x1a\n"
+        response.close()
+    assert client.get("/logo-999.png").status_code == 404

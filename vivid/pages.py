@@ -1,5 +1,5 @@
-"""Public pages Meta asks for before an app can be published:
-privacy policy, terms of service and data-deletion instructions."""
+"""Public pages Meta asks for before an app can be published (privacy policy, terms of service,
+data-deletion instructions), plus the shared layout the website uses too."""
 
 import os
 from html import escape
@@ -17,25 +17,101 @@ def _contact_line() -> str:
     return whatsapp
 
 
-def _page(title: str, body: str) -> str:
+# Shared look for every public page (website and legal pages). Colours come from the VIVID logo.
+CSS = """
+  :root { --bg: #ffffff; --fg: #1d1d1f; --muted: #5f5f66; --card: #f5f5f7; --line: #e4e4e8;
+          --link: #6b2bd9; --wa: #1f9d55; --grad: linear-gradient(120deg, #ff8a00, #ff2d7a 40%, #8b3dff 70%, #1fa2ff); }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0b0d; --fg: #f2f2f4; --muted: #a8a8b3; --card: #17171b; --line: #2a2a31; --link: #b79bff; }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; line-height: 1.6;
+         color: var(--fg); background: var(--bg); }
+  a { color: var(--link); }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+  header.top { background: #000; }
+  header.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+                     padding-top: 10px; padding-bottom: 10px; flex-wrap: wrap; }
+  header.top .brand { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none;
+                      font-weight: 700; letter-spacing: .12em; }
+  header.top .brand img { width: 36px; height: 36px; border-radius: 8px; }
+  header.top nav a { color: #e8e8ee; text-decoration: none; margin-left: 14px; font-size: .95rem; }
+  header.top nav a:first-child { margin-left: 0; }
+  header.top nav a:hover { color: #fff; text-decoration: underline; }
+  main { padding: 24px 0 48px; }
+  h1 { font-size: 1.8rem; line-height: 1.25; margin: 0 0 .25rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; }
+  .updated, .muted { color: var(--muted); }
+  .hero { background: #000; color: #fff; text-align: center; padding: 32px 0 40px; }
+  .hero img { width: 160px; height: 160px; }
+  .hero h1 { font-size: 2rem; margin-top: 8px; }
+  .hero p { color: #d6d6de; font-size: 1.1rem; max-width: 34em; margin: .5rem auto 1.25rem; }
+  .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .btn { display: inline-block; padding: 14px 22px; border-radius: 999px; font-weight: 700; text-decoration: none;
+         font-size: 1.05rem; }
+  .btn-wa { background: var(--wa); color: #fff; }
+  .btn-wa:hover { filter: brightness(1.1); }
+  .btn-ghost { color: inherit; border: 1px solid var(--line); margin-left: 8px; }
+  .hero .btn-ghost { border-color: #444; color: #fff; }
+  .hero .btn { margin-top: 8px; }
+  .cards { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 0; list-style: none; }
+  @media (min-width: 620px) { .cards { grid-template-columns: 1fr 1fr; } .hero h1 { font-size: 2.4rem; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .card h3 { margin: 0 0 .25rem; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--muted); }
+  .steps { padding-left: 1.2rem; } .steps li { margin-bottom: .9rem; }
+  .chat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px;
+          font-size: .95rem; }
+  .chat .you, .chat .bot { padding: 8px 12px; border-radius: 12px; margin: 6px 0; max-width: 88%; }
+  .chat .you { background: #d9fdd3; color: #111; margin-left: auto; }
+  .chat .bot { background: var(--bg); border: 1px solid var(--line); }
+  .price { text-align: center; background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+           padding: 24px 16px; margin: 1.5rem 0; }
+  .price .amount { font-size: 2.6rem; font-weight: 800; margin: 0; }
+  .price ul { text-align: left; display: inline-block; margin: 1rem 0 1.25rem; }
+  .cta { text-align: center; margin: 2.5rem 0 0; }
+  footer { border-top: 1px solid var(--line); padding: 20px 0 32px; font-size: .9rem; color: var(--muted); }
+  footer a { margin-right: 1rem; display: inline-block; margin-bottom: 6px; }
+"""
+
+
+def _base_url() -> str:
+    """Full address of the site (PUBLIC_BASE_URL), so link previews on WhatsApp can find the logo."""
+    return os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+
+def layout(title: str, main: str, hero: str = "") -> str:
+    """Wraps a page in the shared header, footer and styles. `hero` is an optional full-width black band."""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} · {BOT_NAME}</title>
-<style>
-  body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px;
-         margin: 0 auto; padding: 24px 16px 48px; line-height: 1.6; color: #1d1d1f; background: #fff; }}
-  h1 {{ font-size: 1.8rem; margin-bottom: 0; }} h2 {{ font-size: 1.15rem; margin-top: 2rem; }}
-  .updated {{ color: #666; margin-top: 4px; }} a {{ color: #0b6bcb; }}
-  nav {{ margin-top: 2.5rem; font-size: .95rem; }} nav a {{ margin-right: 1rem; }}
-  @media (prefers-color-scheme: dark) {{ body {{ background: #111; color: #eee; }} .updated {{ color: #aaa; }}
-                                         a {{ color: #6cb4ff; }} }}
-</style></head><body>
-<h1>{escape(title)}</h1>
-<p class="updated">{BOT_NAME} ({PRODUCT_NAME}) · Last updated {UPDATED}</p>
-{body}
-<nav><a href="/privacy">Privacy policy</a><a href="/terms">Terms of service</a><a href="/data-deletion">Delete your data</a></nav>
+<meta name="description" content="{BOT_NAME} reminds you on WhatsApp at exactly the right time, in English or Twi, by text or voice note.">
+<link rel="icon" type="image/png" href="/logo-64.png">
+<meta property="og:title" content="{BOT_NAME} · {PRODUCT_NAME}">
+<meta property="og:description" content="WhatsApp reminders in English or Twi, by text or voice note.">
+<meta property="og:image" content="{escape(_base_url())}/logo-256.png">
+<style>{CSS}</style></head><body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="/"><img src="/logo-64.png" alt="" width="36" height="36">{BOT_NAME}</a>
+  <nav><a href="/how-it-works">How it works</a><a href="/pricing">Pricing</a></nav>
+</div></header>
+{hero}
+<main><div class="wrap">
+{main}
+</div></main>
+<footer><div class="wrap">
+  <a href="/">Home</a><a href="/how-it-works">How it works</a><a href="/pricing">Pricing</a>
+  <a href="/privacy">Privacy policy</a><a href="/terms">Terms of service</a><a href="/data-deletion">Delete your data</a>
+  <div>© {UPDATED[-4:]} {PRODUCT_NAME}</div>
+</div></footer>
 </body></html>"""
+
+
+def _page(title: str, body: str) -> str:
+    return layout(title, f"""<h1>{escape(title)}</h1>
+<p class="updated">{BOT_NAME} ({PRODUCT_NAME}) · Last updated {UPDATED}</p>
+{body}""")
 
 
 def privacy_page() -> str:

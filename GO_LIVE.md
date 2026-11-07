@@ -60,6 +60,8 @@ Update your **existing** Render web service rather than creating a new one. That
 - `VERIFY_TOKEN`, `APP_SECRET` (Meta app → App settings → Basic), `WHATSAPP_TOKEN` (permanent token from step 4), `WHATSAPP_PHONE_NUMBER_ID` (the Telecel one from step 3)
 - `ANTHROPIC_API_KEY`, `ARKESEL_API_KEY`, `ADMIN_TOKEN`, `PAYSTACK_SECRET_KEY`
 - `PUBLIC_BASE_URL` = your Render URL, e.g. `https://vivid-xxxx.onrender.com`
+- `WHATSAPP_PUBLIC_NUMBER` = the Telecel number in international format, digits only (e.g. `233201234567`). The website's "Message VIVID on WhatsApp" buttons open a chat with this number; until it is set they use Meta's test number.
+- `CONTACT_EMAIL` (optional) = the company email address, shown on the privacy, terms and data-deletion pages
 
 Save. Render rebuilds, and the **Logs** tab should end with `VIVID scheduler running every 20s`. Open `https://YOUR-RENDER-URL/health`: it should show `{"status":"ok"}`.
 

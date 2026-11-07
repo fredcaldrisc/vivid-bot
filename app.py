@@ -11,9 +11,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, abort, jsonify, request, send_from_directory
 
-from vivid import BOT_NAME, pages
+from vivid import BOT_NAME, pages, site
 from vivid.ai import ReminderAI
 from vivid.bot import VividBot
 from vivid.config import Settings
@@ -29,6 +29,8 @@ log = logging.getLogger("vivid")
 
 
 FALLBACK_DATA_DIR = Path(__file__).resolve().parent / "data"
+BRAND_DIR = Path(__file__).resolve().parent / "brand"
+LOGO_SIZES = {"64", "256", "1024"}
 
 
 def usable_dir(directory: Path, purpose: str) -> Path:
@@ -108,9 +110,29 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
         token = request.headers.get("X-Admin-Token", "")
         return bool(settings.admin_token) and hmac.compare_digest(settings.admin_token, token)
 
+    # Public website. Prices come from SUBSCRIPTION_PRICE_PESEWAS / SUBSCRIPTION_DAYS.
     @app.get("/")
     def home():
-        return f"<h1>{BOT_NAME} is live</h1>"
+        return site.home_page(settings.price_pesewas, settings.subscription_days)
+
+    @app.get("/how-it-works")
+    def how_it_works():
+        return site.how_it_works_page()
+
+    @app.get("/pricing")
+    def pricing():
+        return site.pricing_page(settings.price_pesewas, settings.subscription_days)
+
+    @app.get("/logo.png")
+    @app.get("/logo-<size>.png")
+    def logo(size: str = "1024"):
+        if size not in LOGO_SIZES:
+            abort(404)
+        return send_from_directory(BRAND_DIR, f"vivid-icon-{size}.png", max_age=7 * 24 * 3600)
+
+    @app.get("/favicon.ico")
+    def favicon():
+        return send_from_directory(BRAND_DIR, "vivid-icon-64.png", mimetype="image/png", max_age=7 * 24 * 3600)
 
     @app.get("/health")
     def health():

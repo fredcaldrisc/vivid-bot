@@ -85,6 +85,10 @@ venv\Scripts\python -m pytest -q
 ```
 The tests use fake WhatsApp, Claude, ASR and SMS clients. They cover subscriptions, the typed and voice flows, Who capture, delivery inside and outside the 24 h window, SMS fallback (timeout, failed send, failed status, no SMS once delivered), Done/Missed/Upcoming, list/cancel, and duplicate webhooks.
 
+## Website
+
+The same Flask app serves the public site: `/` (home), `/how-it-works`, `/pricing`, plus `/privacy`, `/terms` and `/data-deletion`. Code: `vivid/site.py` (pages) and `vivid/pages.py` (shared layout and legal pages). The price comes from `SUBSCRIPTION_PRICE_PESEWAS` / `SUBSCRIPTION_DAYS`; the WhatsApp buttons use `WHATSAPP_PUBLIC_NUMBER`. Logos are served from `brand/` at `/logo.png`, `/logo-256.png`, `/logo-64.png`. Domain and email options: `docs/DOMAIN_AND_EMAIL.md`.
+
 ## Deploy
 
 Any Python host with a **persistent disk** (Render with a disk, Railway volume, Fly.io volume, or a VPS). Start command: `gunicorn -w 1 --threads 8 app:app`. Keep **one** worker, because the scheduler runs inside it. Put all `.env` values in the host's secret settings.
