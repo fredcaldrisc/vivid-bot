@@ -74,6 +74,51 @@ class WhatsApp:
             }
         )
 
+    def ensure_subscribed(self, waba_ids: list[str] | None = None) -> list[str]:
+        """Makes sure each WhatsApp Business Account sends its webhooks to this app.
+
+        Without this link Meta receives users' messages but never forwards them, even when the
+        app's own webhook is configured. WABA ids come from the token's scopes when not given.
+        Returns human-readable lines describing what happened (safe to log).
+        """
+        report = []
+        debug = requests.get(
+            f"{self.base}/debug_token",
+            params={"input_token": self.token, "access_token": self.token},
+            timeout=self.timeout,
+        )
+        if debug.status_code >= 400:
+            return [f"Could not inspect the WhatsApp token ({debug.status_code}): {debug.text[:300]}"]
+        data = debug.json().get("data", {})
+        app_id = str(data.get("app_id", ""))
+        if not waba_ids:
+            waba_ids = sorted({
+                str(t) for scope in data.get("granular_scopes", [])
+                if scope.get("scope", "").startswith("whatsapp_business") for t in scope.get("target_ids", [])
+            })
+        if not waba_ids:
+            return ["The WhatsApp token has no WhatsApp Business Account assigned. Assign the account to "
+                    "the system user and generate a new token."]
+        for waba in waba_ids:
+            url = f"{self.base}/{waba}/subscribed_apps"
+            current = requests.get(url, headers=self._auth, timeout=self.timeout)
+            if current.status_code >= 400:
+                report.append(f"WABA {waba}: could not read subscriptions ({current.status_code}): {current.text[:300]}")
+                continue
+            subscribed = {
+                str((entry.get("whatsapp_business_api_data") or {}).get("id", entry.get("id", "")))
+                for entry in current.json().get("data", [])
+            }
+            if app_id and app_id in subscribed:
+                report.append(f"WABA {waba}: already sends webhooks to app {app_id}")
+                continue
+            added = requests.post(url, headers=self._auth, timeout=self.timeout)
+            if added.status_code >= 400:
+                report.append(f"WABA {waba}: subscribing app {app_id} FAILED ({added.status_code}): {added.text[:300]}")
+            else:
+                report.append(f"WABA {waba}: subscribed app {app_id}, so incoming messages will now be forwarded")
+        return report
+
     def download_media(self, media_id: str) -> tuple[bytes, str]:
         meta = requests.get(f"{self.base}/{media_id}", headers=self._auth, timeout=self.timeout)
         if meta.status_code >= 400:

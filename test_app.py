@@ -392,3 +392,37 @@ def test_delete_my_data_needs_confirmation_and_removes_everything(env):
     assert bot.db.pending_reminders(PHONE) == []
     assert bot.db.get_user(PHONE) is None
     assert not os.path.exists(audio)
+
+
+def test_ensure_subscribed_links_waba_to_app(monkeypatch):
+    from vivid import whatsapp as wa_module
+
+    class Resp:
+        def __init__(self, status, body):
+            self.status_code, self._body, self.text = status, body, str(body)
+
+        def json(self):
+            return self._body
+
+    calls = []
+    state = {"subscribed": False}
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/debug_token"):
+            return Resp(200, {"data": {"app_id": "777", "granular_scopes": [
+                {"scope": "whatsapp_business_messaging", "target_ids": ["555"]}]}})
+        data = [{"whatsapp_business_api_data": {"id": "777"}}] if state["subscribed"] else []
+        return Resp(200, {"data": data})
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        state["subscribed"] = True
+        return Resp(200, {"success": True})
+
+    monkeypatch.setattr(wa_module.requests, "get", fake_get)
+    monkeypatch.setattr(wa_module.requests, "post", fake_post)
+    client = wa_module.WhatsApp("token", "123")
+    first = client.ensure_subscribed()
+    assert calls and calls[0].endswith("/555/subscribed_apps") and "subscribed app 777" in first[0]
+    second = client.ensure_subscribed()
+    assert len(calls) == 1 and "already" in second[0]

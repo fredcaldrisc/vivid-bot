@@ -7,6 +7,7 @@ Run with ONE worker process (the scheduler lives inside it):
 import hmac
 import logging
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -74,6 +75,16 @@ def build_bot(settings: Settings) -> VividBot:
         template_lang=settings.reminder_template_lang,
         subscription_days=settings.subscription_days,
     )
+
+
+def _check_webhook_subscription(bot: VividBot, settings: Settings) -> None:
+    """At start-up, make sure the WhatsApp Business Account forwards messages to this app."""
+    waba = [w.strip() for w in os.environ.get("WHATSAPP_BUSINESS_ACCOUNT_ID", "").split(",") if w.strip()]
+    try:
+        for line in bot.wa.ensure_subscribed(waba or None):
+            log.info("Webhook subscription check: %s", line)
+    except Exception:
+        log.exception("Webhook subscription check failed")
 
 
 def create_app(settings: Settings | None = None, bot: VividBot | None = None, run_async: bool = True) -> Flask:
@@ -191,6 +202,8 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
 
     if settings.run_scheduler:
         start_scheduler(bot, settings.scheduler_interval)
+        if settings.whatsapp_token:
+            threading.Thread(target=_check_webhook_subscription, args=(bot, settings), daemon=True).start()
 
     return app
 
