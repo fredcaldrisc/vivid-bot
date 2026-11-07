@@ -270,6 +270,25 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    # ---- data deletion ----
+    def delete_user_data(self, phone: str) -> list[str]:
+        """Deletes a subscriber's profile and reminders. Returns saved voice-note paths to remove.
+
+        Payment records (reference + phone) are kept for accounting, as the privacy page says.
+        """
+        with self._lock:
+            paths = [
+                r["audio_path"] for r in self._conn.execute(
+                    "SELECT audio_path FROM reminders WHERE phone = ? AND audio_path IS NOT NULL", (phone,)
+                ).fetchall()
+            ]
+            self._conn.execute(
+                "DELETE FROM message_map WHERE reminder_id IN (SELECT id FROM reminders WHERE phone = ?)", (phone,)
+            )
+            self._conn.execute("DELETE FROM reminders WHERE phone = ?", (phone,))
+            self._conn.execute("DELETE FROM users WHERE phone = ?", (phone,))
+            return paths
+
     # ---- payments ----
     def add_payment(self, reference: str, phone: str) -> None:
         self._exec(

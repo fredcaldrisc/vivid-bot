@@ -12,7 +12,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-from vivid import BOT_NAME
+from vivid import BOT_NAME, pages
 from vivid.ai import ReminderAI
 from vivid.bot import VividBot
 from vivid.config import Settings
@@ -142,6 +142,19 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
             if bot.confirm_payment(reference):
                 log.info("Subscription activated for payment %s", reference)
         return jsonify(status="ok"), 200
+
+    # Public pages Meta requires before the app can be published.
+    @app.get("/privacy")
+    def privacy():
+        return pages.privacy_page()
+
+    @app.get("/terms")
+    def terms():
+        return pages.terms_page()
+
+    @app.get("/data-deletion")
+    def data_deletion():
+        return pages.data_deletion_page()
 
     @app.get("/paid")
     def paid():

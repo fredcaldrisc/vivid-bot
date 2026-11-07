@@ -41,6 +41,7 @@ HELP_WORDS = {"help", "menu", "start", "hi", "hello", "hey", "boa me", "mmoa"}
 LIST_WORDS = {"list", "my reminders", "reminders", "history"}
 SUBSCRIBE_WORDS = {"subscribe", "pay", "renew", "status", "subscription"}
 CANCEL_DRAFT_WORDS = {"cancel", "stop", "gyae"}
+DELETE_WORDS = {"delete my data", "delete my account", "delete me"}
 DONE_WORDS = {"done", "✅", "ok done", "finished", "mawie", "mayɛ"}
 CANCEL_RE = re.compile(r"^(?:cancel|delete|remove)\s*#?\s*(\d+)$", re.IGNORECASE)
 DONE_RE = re.compile(r"^done\s*#?\s*(\d+)$", re.IGNORECASE)
@@ -127,7 +128,25 @@ class VividBot:
         self._deliver_awaiting(phone, voice_only=True)
 
         text = (msg.get("text") or {}).get("body", "").strip() if kind == "text" else ""
-        command = text.lower()
+        command = " ".join(text.lower().split())
+
+        # Data deletion works for everyone, subscribed or not.
+        if user["state"] == "confirm_delete":
+            if command == "delete all":
+                self._delete_everything(phone)
+            else:
+                self.db.set_state(phone, "idle")
+                self.say(phone, "Okay, nothing was deleted. 👍")
+            return
+        if command in DELETE_WORDS:
+            self.db.set_state(phone, "confirm_delete")
+            self.say(
+                phone,
+                "⚠️ This permanently deletes everything VIVID holds about you: your profile, all reminders "
+                "(upcoming and past) and your saved voice notes. Any remaining subscription time is lost.\n\n"
+                "Reply *DELETE ALL* to confirm, or anything else to cancel.",
+            )
+            return
 
         if not self.is_subscribed(user):
             self._send_subscribe(phone, first_time=user["subscribed_until"] is None)
@@ -199,6 +218,15 @@ class VividBot:
                 except Exception:
                     log.exception("Could not open reminder %s", reminder_id)
                     self.say(phone, "Sorry, I couldn't load that reminder. 😕")
+
+    def _delete_everything(self, phone: str) -> None:
+        for path in self.db.delete_user_data(phone):
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                log.exception("Could not delete voice note %s", path)
+        log.info("Deleted all data for a subscriber on request")
+        self.say(phone, "🗑️ Done. All your VIVID data has been deleted. Message me any time to start again.")
 
     def _mark_done(self, phone: str, reminder_id: int) -> None:
         if self.db.set_outcome(phone, reminder_id, "done"):
@@ -531,5 +559,5 @@ class VividBot:
             "2️⃣ I'll ask for the *vivid description* with all the details.\n"
             "3️⃣ At that time I send it to you on WhatsApp. If your phone is offline, I send an SMS.\n"
             "4️⃣ Tap *✅ Done* when you've done it.\n\n"
-            "Commands: *list* (Upcoming / Done / Missed) · *done* · *cancel 3* · *status*",
+            "Commands: *list* (Upcoming / Done / Missed) · *done* · *cancel 3* · *status* · *delete my data*",
         )

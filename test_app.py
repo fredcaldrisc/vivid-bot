@@ -363,3 +363,32 @@ def test_missing_disk_falls_back_instead_of_crashing(tmp_path, monkeypatch):
     bot = app_module.build_bot(settings)
     assert bot.audio_dir == fallback / "audio"
     assert (fallback / "vivid.db").exists()
+
+
+def test_public_pages_for_meta(env):
+    client, _, _ = env
+    for path, words in [("/privacy", "What we collect"), ("/terms", "Terms of service"), ("/data-deletion", "DELETE ALL")]:
+        response = client.get(path)
+        assert response.status_code == 200 and words in response.get_data(as_text=True)
+
+
+def test_delete_my_data_needs_confirmation_and_removes_everything(env):
+    client, bot, wa = env
+    bot.extend_subscription(PHONE)
+    webhook(client, text_msg("Remind me to call mom at 6:30pm"))
+    webhook(client, voice_msg())
+    [reminder] = bot.db.pending_reminders(PHONE)
+    audio = reminder["audio_path"]
+
+    webhook(client, text_msg("delete my data"))
+    assert "DELETE ALL" in wa.last_text()
+    webhook(client, text_msg("no thanks"))
+    assert "nothing was deleted" in wa.last_text()
+    assert bot.db.pending_reminders(PHONE)
+
+    webhook(client, text_msg("Delete my data"))
+    webhook(client, text_msg("DELETE ALL"))
+    assert "deleted" in wa.last_text()
+    assert bot.db.pending_reminders(PHONE) == []
+    assert bot.db.get_user(PHONE) is None
+    assert not os.path.exists(audio)
