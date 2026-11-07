@@ -97,8 +97,11 @@ class WhatsApp:
                 if scope.get("scope", "").startswith("whatsapp_business") for t in scope.get("target_ids", [])
             })
         if not waba_ids:
-            return ["The WhatsApp token has no WhatsApp Business Account assigned. Assign the account to "
-                    "the system user and generate a new token."]
+            scopes = ", ".join(sorted(s.get("scope", "?") for s in data.get("granular_scopes", []))) or "none"
+            return ["The WhatsApp token has no WhatsApp Business Account assigned (token permissions: "
+                    f"{scopes}). Give the system user FULL control of the WhatsApp account, generate a new "
+                    "token with whatsapp_business_messaging and whatsapp_business_management, or set "
+                    "WHATSAPP_BUSINESS_ACCOUNT_ID."]
         for waba in waba_ids:
             url = f"{self.base}/{waba}/subscribed_apps"
             current = requests.get(url, headers=self._auth, timeout=self.timeout)
