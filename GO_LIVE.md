@@ -78,7 +78,7 @@ Save. Render rebuilds, and the **Logs** tab should end with `VIVID scheduler run
 1. Sign up at arkesel.com and top up SMS credit.
 2. **Sender IDs → Register `VIVID`**. Approval takes about a day. Until then SMS may fail or show a default sender.
 3. Copy your **API key** into `ARKESEL_API_KEY`.
-4. How it works: when a reminder fires, VIVID sends it on WhatsApp first. If WhatsApp hasn't reported it as *delivered to the phone* within `SMS_FALLBACK_MINUTES` (default 5), VIVID sends the same reminder by SMS. That covers a phone that's off or has no data. If WhatsApp reports a failure, the SMS goes out straight away.
+4. How it works (Premium plan only): when a reminder fires, VIVID sends it on WhatsApp first. If WhatsApp hasn't reported it as *delivered to the phone*, VIVID texts it by SMS on the `SMS_SCHEDULE_MINUTES` schedule (default 5, 15 and 30 minutes, at most `PREMIUM_SMS_BACKUPS` = 3), stopping once it is delivered or marked Done. That covers a phone that's off or has no data. If WhatsApp reports a failure, the SMS goes out straight away.
 
 ## 8. Test it
 1. Give your own number access (WhatsApp numbers are digits only, e.g. `233241234567`):

@@ -67,16 +67,18 @@ def build_bot(settings: Settings) -> VividBot:
         whatsapp=WhatsApp(settings.whatsapp_token, settings.phone_number_id, settings.graph_version),
         ai=ReminderAI(settings.anthropic_model),
         transcriber=Transcriber(settings.asr_url, settings.asr_key),
-        payments=Paystack(settings.paystack_secret, settings.price_pesewas, callback),
+        payments=Paystack(settings.paystack_secret, callback),
         sms=ArkeselSMS(settings.arkesel_api_key, settings.sms_sender),
-        sms_fallback_minutes=settings.sms_fallback_minutes,
+        plans=settings.plans,
+        sms_schedule_minutes=settings.sms_schedule_minutes,
+        nudge_interval_minutes=settings.nudge_interval_minutes,
+        nudge_max_repeats=settings.nudge_max_repeats,
         missed_after_minutes=settings.missed_after_minutes,
         owner_numbers=settings.owner_numbers,
         tz=settings.timezone,
         audio_dir=str(audio_dir),
         template_name=settings.reminder_template,
         template_lang=settings.reminder_template_lang,
-        subscription_days=settings.subscription_days,
     )
 
 
@@ -110,10 +112,10 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
         token = request.headers.get("X-Admin-Token", "")
         return bool(settings.admin_token) and hmac.compare_digest(settings.admin_token, token)
 
-    # Public website. Prices come from SUBSCRIPTION_PRICE_PESEWAS / SUBSCRIPTION_DAYS.
+    # Public website. Prices come from STANDARD_PRICE_PESEWAS / PREMIUM_PRICE_PESEWAS / SUBSCRIPTION_DAYS.
     @app.get("/")
     def home():
-        return site.home_page(settings.price_pesewas, settings.subscription_days)
+        return site.home_page(settings.plans)
 
     @app.get("/how-it-works")
     def how_it_works():
@@ -121,7 +123,7 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
 
     @app.get("/pricing")
     def pricing():
-        return site.pricing_page(settings.price_pesewas, settings.subscription_days)
+        return site.pricing_page(settings.plans)
 
     @app.get("/logo.png")
     @app.get("/logo-<size>.png")
@@ -196,15 +198,18 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
 
     @app.post("/admin/subscribers")
     def grant_subscription():
-        """Manually activate a subscriber: {"phone": "233241234567", "days": 30}"""
+        """Manually activate a subscriber: {"phone": "233241234567", "days": 30, "plan": "premium"}"""
         if not is_admin():
             return jsonify(error="unauthorised"), 401
         body = request.get_json(silent=True) or {}
         phone = "".join(ch for ch in str(body.get("phone", "")) if ch.isdigit())
         if not phone:
             return jsonify(error="phone is required (international format, digits only)"), 400
-        until = bot.extend_subscription(phone, int(body.get("days") or settings.subscription_days))
-        return jsonify(phone=phone, subscribed_until=until.isoformat()), 200
+        plan = str(body.get("plan") or "standard").lower()
+        if plan not in settings.plans:
+            return jsonify(error="plan must be 'standard' or 'premium'"), 400
+        until = bot.extend_subscription(phone, int(body.get("days") or settings.subscription_days), plan)
+        return jsonify(phone=phone, plan=plan, subscribed_until=until.isoformat()), 200
 
     missing = [name for name, value in [
         ("VERIFY_TOKEN", settings.verify_token), ("WHATSAPP_TOKEN", settings.whatsapp_token),

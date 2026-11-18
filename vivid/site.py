@@ -12,8 +12,8 @@ from urllib.parse import quote
 from . import BOT_NAME, PRODUCT_NAME
 from .pages import layout
 
-# Meta's test number, used until WHATSAPP_PUBLIC_NUMBER is set.
-DEFAULT_PUBLIC_NUMBER = "15552049961"
+# VIVID's WhatsApp number (+233 50 628 1109), used unless WHATSAPP_PUBLIC_NUMBER overrides it.
+DEFAULT_PUBLIC_NUMBER = "233506281109"
 
 
 def whatsapp_number() -> str:
@@ -23,12 +23,6 @@ def whatsapp_number() -> str:
 
 def whatsapp_link(text: str = "Hi VIVID") -> str:
     return f"https://wa.me/{whatsapp_number()}?text={quote(text)}"
-
-
-def price_text(price_pesewas: int) -> str:
-    """2000 -> 'GHS 20', 2550 -> 'GHS 25.50'."""
-    cedis = price_pesewas / 100
-    return f"GHS {cedis:.0f}" if price_pesewas % 100 == 0 else f"GHS {cedis:.2f}"
 
 
 def _wa_button(label: str = f"Message {BOT_NAME} on WhatsApp") -> str:
@@ -47,12 +41,19 @@ FEATURES = [
     ("🇬🇭 English or Twi", "Write or speak in the language you're comfortable with."),
     ("🎙️ Text or voice notes", "Type your reminder, or record a voice note. VIVID plays your own voice back to you."),
     ("✨ Vivid descriptions", "Add the details that matter (who, where, why) so the reminder tells you exactly what to do."),
-    ("📶 SMS backup", "If WhatsApp can't reach your phone in time, VIVID sends the reminder by SMS."),
+    ("👉 Nudges until Done", "VIVID keeps nudging you on WhatsApp until you tap Done, so nothing slips."),
+    ("📶 SMS backup (Premium)", "If WhatsApp can't reach your phone, VIVID texts you the reminder, up to 3 times."),
     ("✅ Done, Missed, Upcoming", "Tap Done when it's done. Send “list” to see what's coming up, done and missed."),
 ]
 
 
-def home_page(price_pesewas: int, days: int) -> str:
+def _plans_summary(plans: dict) -> str:
+    std, pre = plans["standard"], plans["premium"]
+    return (f"<b>{std.name}</b> {std.price_text} or <b>{pre.name}</b> {pre.price_text} "
+            f"(with SMS backup) for {std.days} days")
+
+
+def home_page(plans: dict) -> str:
     hero = f"""<section class="hero"><div class="wrap">
   <img src="/logo-256.png" alt="{BOT_NAME} logo" width="160" height="160">
   <h1>Never forget <span class="grad">what matters</span>.</h1>
@@ -74,8 +75,7 @@ def home_page(price_pesewas: int, days: int) -> str:
 </div>
 
 <h2>Simple pricing</h2>
-<p><b>{price_text(price_pesewas)}</b> for {days} days of {PRODUCT_NAME}. Pay with mobile money or card.
-<a href="/pricing">See pricing</a>.</p>
+<p>{_plans_summary(plans)}. Pay with mobile money or card. <a href="/pricing">See pricing</a>.</p>
 {_cta()}"""
     return layout(f"{PRODUCT_NAME} on WhatsApp", main, hero)
 
@@ -91,8 +91,9 @@ def how_it_works_page() -> str:
   <li><b>Add the vivid description.</b> {BOT_NAME} asks for the details: what exactly to say, bring or do.
       You can answer by text or voice note.</li>
   <li><b>Get reminded, then tap Done.</b> At the right time {BOT_NAME} sends your reminder on WhatsApp
-      (with your voice note, if you recorded one). If your phone is offline, it sends an SMS instead.
-      Tap <b>✅ Done</b> when it's done; reminders you don't mark become <b>Missed</b>.</li>
+      (with your voice note, if you recorded one) and keeps <b>nudging</b> you until you tap <b>✅ Done</b>.
+      On Premium, if your phone is offline, it texts you by SMS (up to 3 times).
+      Reminders you never mark become <b>Missed</b>.</li>
 </ol>
 
 <h2>Handy commands</h2>
@@ -100,7 +101,8 @@ def how_it_works_page() -> str:
   <li class="card"><h3>list</h3><p>See your Upcoming, Done and Missed reminders.</p></li>
   <li class="card"><h3>done</h3><p>Mark the reminder you just got as done.</p></li>
   <li class="card"><h3>cancel 3</h3><p>Cancel upcoming reminder number 3.</p></li>
-  <li class="card"><h3>status</h3><p>Check your subscription.</p></li>
+  <li class="card"><h3>status</h3><p>Check your plan and when it renews.</p></li>
+  <li class="card"><h3>premium</h3><p>Upgrade to Premium for SMS backup.</p></li>
   <li class="card"><h3>help</h3><p>Show the menu again.</p></li>
   <li class="card"><h3>delete my data</h3><p>Erase everything {BOT_NAME} holds about you.</p></li>
 </ul>
@@ -108,25 +110,33 @@ def how_it_works_page() -> str:
     return layout("How it works", main)
 
 
-def pricing_page(price_pesewas: int, days: int) -> str:
-    main = f"""<h1>Pricing</h1>
-<p class="muted">One simple plan. No app, no contract.</p>
-<div class="price">
-  <p class="muted">{PRODUCT_NAME}</p>
-  <p class="amount">{price_text(price_pesewas)}</p>
-  <p class="muted">for {days} days</p>
+def _plan_card(plan, number: int) -> str:
+    items = "\n".join(f"    <li>{escape(f)}</li>" for f in plan.features)
+    return f"""<div class="price">
+  <p class="muted">{PRODUCT_NAME} {escape(plan.name)}</p>
+  <p class="amount">{plan.price_text}</p>
+  <p class="muted">for {plan.days} days</p>
   <ul>
-    <li>Unlimited reminders on WhatsApp</li>
-    <li>English or Twi, text or voice notes</li>
-    <li>SMS backup when WhatsApp can't reach you</li>
-    <li>Done / Missed / Upcoming history</li>
+{items}
   </ul><br>
-  {_wa_button("Subscribe on WhatsApp")}
+  {_wa_button(f"Get {plan.name} on WhatsApp")}
+  <p class="muted">Then reply <b>{number}</b> to {BOT_NAME}.</p>
+</div>"""
+
+
+def pricing_page(plans: dict) -> str:
+    std, pre = plans["standard"], plans["premium"]
+    main = f"""<h1>Pricing</h1>
+<p class="muted">Two simple plans. No app, no contract.</p>
+<div class="cards">
+{_plan_card(std, 1)}
+{_plan_card(pre, 2)}
 </div>
 <h2>How do I pay?</h2>
-<p>Message {BOT_NAME} on WhatsApp. It sends you a secure Paystack link where you pay with mobile money
-or card. {BOT_NAME} confirms on WhatsApp as soon as the payment goes through.</p>
+<p>Message {BOT_NAME} on WhatsApp and reply <b>1</b> for {std.name} or <b>2</b> for {pre.name}. {BOT_NAME}
+sends you a secure Paystack link where you pay with mobile money or card, and confirms on WhatsApp as soon as
+the payment goes through. Already on {std.name}? Send <b>premium</b> to upgrade.</p>
 <h2>Can I stop?</h2>
-<p>Yes. Your subscription simply ends after {days} days unless you pay again. You can also
+<p>Yes. Your plan simply ends after {std.days} days unless you pay again. You can also
 <a href="/data-deletion">delete all your data</a> at any time.</p>"""
     return layout("Pricing", main)

@@ -15,25 +15,24 @@ log = logging.getLogger(__name__)
 class Paystack:
     API = "https://api.paystack.co"
 
-    def __init__(self, secret_key: str, amount_pesewas: int, callback_url: str = ""):
+    def __init__(self, secret_key: str, callback_url: str = ""):
         self.secret_key = secret_key
-        self.amount = amount_pesewas
         self.callback_url = callback_url
 
     @property
     def enabled(self) -> bool:
         return bool(self.secret_key)
 
-    def create_checkout(self, phone: str) -> tuple[str, str]:
-        """Returns (reference, payment_url) for one subscription period."""
-        reference = f"vivid-{phone}-{uuid.uuid4().hex[:10]}"
+    def create_checkout(self, phone: str, plan) -> tuple[str, str]:
+        """Returns (reference, payment_url) for one period of the given plan (a vivid.plans.Plan)."""
+        reference = f"vivid-{plan.key}-{phone}-{uuid.uuid4().hex[:10]}"
         payload = {
             # Paystack requires an email; WhatsApp gives us a phone number only.
             "email": f"{phone}@subscribers.vivid.invalid",
-            "amount": self.amount,
+            "amount": plan.price_pesewas,
             "currency": "GHS",
             "reference": reference,
-            "metadata": {"phone": phone, "product": PRODUCT_NAME},
+            "metadata": {"phone": phone, "product": PRODUCT_NAME, "plan": plan.key},
         }
         if self.callback_url:
             payload["callback_url"] = self.callback_url

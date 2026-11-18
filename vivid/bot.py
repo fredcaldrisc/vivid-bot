@@ -27,6 +27,7 @@ from . import BOT_NAME, PRODUCT_NAME
 from .ai import AIError, ReminderAI
 from .db import Database, iso, parse_iso, utcnow
 from .payments import Paystack
+from .plans import PREMIUM, STANDARD, build_plans, parse_choice
 from .sms import ArkeselSMS
 from .speech import Transcriber
 from .whatsapp import WhatsApp
@@ -39,7 +40,8 @@ HISTORY_DAYS = 7
 
 HELP_WORDS = {"help", "menu", "start", "hi", "hello", "hey", "boa me", "mmoa"}
 LIST_WORDS = {"list", "my reminders", "reminders", "history"}
-SUBSCRIBE_WORDS = {"subscribe", "pay", "renew", "status", "subscription"}
+SUBSCRIBE_WORDS = {"subscribe", "pay", "renew", "status", "subscription", "plan", "my plan"}
+UPGRADE_WORDS = {"premium", "upgrade", "go premium"}
 CANCEL_DRAFT_WORDS = {"cancel", "stop", "gyae"}
 DELETE_WORDS = {"delete my data", "delete my account", "delete me"}
 DONE_WORDS = {"done", "✅", "ok done", "finished", "mawie", "mayɛ"}
@@ -65,8 +67,10 @@ class VividBot:
         audio_dir: str = "data/audio",
         template_name: str = "vivid_reminder",
         template_lang: str = "en",
-        subscription_days: int = 30,
-        sms_fallback_minutes: int = 5,
+        plans: dict | None = None,
+        sms_schedule_minutes: tuple = (5, 15, 30),
+        nudge_interval_minutes: int = 10,
+        nudge_max_repeats: int = 6,
         missed_after_minutes: int = 120,
         owner_numbers: frozenset | set | tuple = (),
     ):
@@ -80,8 +84,10 @@ class VividBot:
         self.audio_dir = Path(audio_dir)
         self.template_name = template_name
         self.template_lang = template_lang
-        self.subscription_days = subscription_days
-        self.sms_after = timedelta(minutes=sms_fallback_minutes)
+        self.plans = plans or build_plans(3000, 7000, 30, 3)
+        self.sms_schedule = [timedelta(minutes=m) for m in sms_schedule_minutes] or [timedelta(minutes=5)]
+        self.nudge_interval = timedelta(minutes=nudge_interval_minutes)
+        self.nudge_max = nudge_max_repeats
         self.missed_after = timedelta(minutes=missed_after_minutes)
         self.owner_numbers = frozenset(owner_numbers)
         self._locks: defaultdict[str, Lock] = defaultdict(Lock)
@@ -151,7 +157,11 @@ class VividBot:
             return
 
         if not self.is_subscribed(user):
-            self._send_subscribe(phone, first_time=user["subscribed_until"] is None)
+            choice = parse_choice(command)
+            if choice:
+                self._send_checkout(phone, choice)
+            else:
+                self._send_subscribe(phone, first_time=user["subscribed_until"] is None)
             return
 
         if kind not in ("text", "audio"):
@@ -160,10 +170,19 @@ class VividBot:
 
         if command in SUBSCRIBE_WORDS:
             if phone in self.owner_numbers:
-                self.say(phone, f"✅ You have owner access to {PRODUCT_NAME}: no subscription needed.")
+                self.say(phone, f"✅ You have owner access to {PRODUCT_NAME} (all Premium features): no subscription needed.")
                 return
+            plan = self.plans[self.plan_of(user)]
             until = parse_iso(user["subscribed_until"]).astimezone(self.tz)
-            self.say(phone, f"✅ Your {PRODUCT_NAME} subscription is active until {fmt_time(until)}.")
+            upsell = ""
+            if plan.key == STANDARD:
+                premium = self.plans[PREMIUM]
+                upsell = (f"\n\nWant SMS backup when WhatsApp can't reach you? Reply *premium* to upgrade "
+                          f"({premium.price_text} for {premium.days} days).")
+            self.say(phone, f"✅ Your *{plan.name}* subscription is active until {fmt_time(until)}.{upsell}")
+            return
+        if command in UPGRADE_WORDS:
+            self._send_checkout(phone, PREMIUM)
             return
         if command in LIST_WORDS:
             self._send_list(phone)
@@ -363,8 +382,10 @@ class VividBot:
 
     # ----------------------------------------------------------------- outbound
     def tick(self) -> int:
-        """One scheduler pass: fire due reminders, SMS undelivered ones, mark old ones Missed."""
+        """One scheduler pass: fire due reminders, repeat unanswered ones (nudge), send Premium SMS
+        backups for undelivered ones, and mark old ones Missed."""
         fired = self.fire_due()
+        self.send_nudges()
         self.send_sms_fallbacks()
         self.db.sweep_missed(utcnow() - self.missed_after)
         return fired
@@ -376,38 +397,42 @@ class VividBot:
                 self._fire(reminder)
         return len(reminders)
 
-    def _fire(self, r: dict) -> None:
-        phone = r["phone"]
-        user = self.db.get_user(phone) or {}
+    def _send_out(self, r: dict, again: bool = False) -> tuple[str | None, str]:
+        """Sends a reminder on WhatsApp; returns (message id, new status)."""
+        user = self.db.get_user(r["phone"]) or {}
         last = parse_iso(user.get("last_inbound_at"))
-        in_window = last is not None and utcnow() - last < SERVICE_WINDOW
+        if last is not None and utcnow() - last < SERVICE_WINDOW:
+            return self._deliver(r, again=again), "sent"
+        # Outside the 24h window only an approved template may be sent.
+        wamid = self.wa.send_template(
+            r["phone"], self.template_name, self.template_lang, [r["reminder_text"]], button_payload=f"open:{r['id']}"
+        )
+        return wamid, ("awaiting_play" if r["vivid_kind"] == "voice" else "sent")
+
+    def _fire(self, r: dict) -> None:
         try:
-            if in_window:
-                wamid = self._deliver(r)
-                self.db.set_reminder_status(r["id"], "sent")
-            else:
-                # Outside the 24h window only an approved template may be sent.
-                wamid = self.wa.send_template(
-                    phone, self.template_name, self.template_lang, [r["reminder_text"]], button_payload=f"open:{r['id']}"
-                )
-                self.db.set_reminder_status(r["id"], "awaiting_play" if r["vivid_kind"] == "voice" else "sent")
+            wamid, status = self._send_out(r)
+            self.db.set_reminder_status(r["id"], status)
             self.db.link_message(wamid, r["id"])
         except Exception as exc:
             log.exception("WhatsApp reminder %s failed; falling back to SMS", r["id"])
             self.db.set_reminder_status(r["id"], "failed", str(exc)[:500])
             self._send_sms(self.db.get_reminder(r["id"]))
 
-    def _deliver(self, r: dict) -> str | None:
+    def _deliver(self, r: dict, again: bool = False) -> str | None:
         """Sends the full reminder on WhatsApp with a Done button; returns the main message id."""
         done = [(f"done:{r['id']}", "✅ Done")]
+        heading = f"👉 *{BOT_NAME}* nudge: you haven't tapped Done yet" if again else f"⏰ *{BOT_NAME}*"
         if r["vivid_kind"] == "voice" and r["audio_path"] and Path(r["audio_path"]).exists():
-            self.wa.send_text(r["phone"], f"⏰ *{BOT_NAME}*: here is your voice reminder 🎙️")
+            self.wa.send_text(r["phone"], f"{heading}: here is your voice reminder 🎙️")
             content = Path(r["audio_path"]).read_bytes()
             media_id = self.wa.upload_media(content, r["audio_mime"] or "audio/ogg")
             wamid = self.wa.send_audio(r["phone"], media_id)
             self.wa.send_buttons(r["phone"], "Tap *Done* when you've done it.", done)
             return wamid
-        return self.wa.send_buttons(r["phone"], f"⏰ *{BOT_NAME}*\n\n{r['reminder_text']}", done)
+        return self.wa.send_buttons(
+            r["phone"], f"{heading}\n\n{r['reminder_text']}\n\nTap *Done* when you've done it.", done
+        )
 
     def _deliver_awaiting(self, phone: str, voice_only: bool = True) -> bool:
         pending = [r for r in self.db.awaiting_play(phone) if not voice_only or r["vivid_kind"] == "voice"]
@@ -420,41 +445,86 @@ class VividBot:
                 self.db.set_reminder_status(r["id"], "failed", str(exc)[:500])
         return bool(pending)
 
-    def send_sms_fallbacks(self) -> int:
-        """SMS every fired reminder that WhatsApp hasn't delivered to the phone in time."""
+    def send_nudges(self) -> int:
+        """Re-sends reminders that reached the phone but aren't Done yet, every nudge interval."""
         count = 0
-        for r in self.db.needing_sms(utcnow() - self.sms_after):
-            if r.get("outcome") == "done":
+        for r in self.db.nudge_due(utcnow() - self.nudge_interval, self.nudge_max):
+            with self._locks[r["phone"]]:
+                if not self.db.claim_nudge(r["id"], r["nudge_count"]):
+                    continue
+                try:
+                    wamid, _ = self._send_out(r, again=True)
+                    self.db.link_message(wamid, r["id"])
+                    count += 1
+                except Exception:
+                    log.exception("Could not repeat reminder %s", r["id"])
+        return count
+
+    def _sms_allowance(self, phone: str) -> int:
+        user = self.db.get_user(phone) or {"phone": phone}
+        return min(self.plans[self.plan_of(user)].sms_backups, len(self.sms_schedule))
+
+    def send_sms_fallbacks(self) -> int:
+        """Premium: SMS reminders WhatsApp hasn't delivered, on the SMS schedule (e.g. 5, 15, 30 min)."""
+        now, count = utcnow(), 0
+        for r in self.db.undelivered_open(len(self.sms_schedule)):
+            sent = r.get("sms_count") or 0
+            if sent >= self._sms_allowance(r["phone"]):
+                continue
+            immediate = sent == 0 and r.get("delivery") == "failed"
+            if not immediate and now - parse_iso(r["fired_at"]) < self.sms_schedule[sent]:
                 continue
             count += self._send_sms(r)
         return count
 
     def _send_sms(self, r: dict | None) -> bool:
-        if not r or not self.sms.enabled or not self.db.claim_sms(r["id"]):
+        if not r or not self.sms.enabled:
+            return False
+        sent = r.get("sms_count") or 0
+        allowed = self._sms_allowance(r["phone"])
+        if sent >= allowed or not self.db.claim_sms(r["id"], sent):
             return False
         text = f"{BOT_NAME}: {r['reminder_text']}"
         if r["vivid_kind"] == "voice":
             text += " (Your voice note is waiting on WhatsApp.)"
+        if sent:
+            text += f" [reminder {sent + 1} of {allowed}]"
         if self.sms.send(r["phone"], text):
-            log.info("SMS fallback sent for reminder %s", r["id"])
+            log.info("SMS backup %s/%s sent for reminder %s", sent + 1, allowed, r["id"])
             return True
         self.db.release_sms(r["id"])  # try again on the next tick
         return False
 
     # ------------------------------------------------------------ subscriptions
+    def plan_of(self, user: dict) -> str:
+        if user.get("phone") in self.owner_numbers:
+            return PREMIUM
+        return user.get("plan") if user.get("plan") in self.plans else STANDARD
+
     def is_subscribed(self, user: dict) -> bool:
         if user.get("phone") in self.owner_numbers:
             return True
         until = parse_iso(user.get("subscribed_until"))
         return until is not None and until > utcnow()
 
-    def extend_subscription(self, phone: str, days: int | None = None) -> datetime:
+    def extend_subscription(self, phone: str, days: int | None = None, plan: str = STANDARD) -> datetime:
+        plan = plan if plan in self.plans else STANDARD
         user = self.db.get_or_create_user(phone)
         current = parse_iso(user.get("subscribed_until"))
         start = current if current and current > utcnow() else utcnow()
-        until = start + timedelta(days=days or self.subscription_days)
-        self.db.set_subscribed_until(phone, until)
+        until = start + timedelta(days=days or self.plans[plan].days)
+        self.db.set_subscribed_until(phone, until, plan)
         return until
+
+    def _plan_menu(self) -> str:
+        std, pre = self.plans[STANDARD], self.plans[PREMIUM]
+        return (
+            f"1️⃣ *{std.name}*: {std.price_text} for {std.days} days\n"
+            "   Reminders on WhatsApp, repeated until you tap Done\n"
+            f"2️⃣ *{pre.name}*: {pre.price_text} for {pre.days} days\n"
+            f"   Everything in {std.name} + SMS backup (up to {pre.sms_backups}x) when WhatsApp can't reach you\n\n"
+            "Reply *1* or *2* to get your payment link (mobile money or card)."
+        )
 
     def _send_subscribe(self, phone: str, first_time: bool) -> None:
         intro = (
@@ -463,27 +533,34 @@ class VividBot:
             if first_time
             else f"Your *{PRODUCT_NAME}* subscription has expired."
         )
-        price = f"GHS {self.payments.amount / 100:.2f} for {self.subscription_days} days"
+        self.say(phone, f"{intro}\n\nChoose a {PRODUCT_NAME} plan:\n{self._plan_menu()}")
+
+    def _send_checkout(self, phone: str, plan_key: str) -> None:
+        plan = self.plans[plan_key]
         if self.payments.enabled:
             try:
-                reference, url = self.payments.create_checkout(phone)
-                self.db.add_payment(reference, phone)
-                self.say(phone, f"{intro}\n\nSubscribe to *{PRODUCT_NAME}* ({price}) here:\n{url}\n\nI'll message you as soon as payment is confirmed.")
+                reference, url = self.payments.create_checkout(phone, plan)
+                self.db.add_payment(reference, phone, plan.key)
+                self.say(phone, f"💳 *{PRODUCT_NAME} {plan.name}*: {plan.price_text} for {plan.days} days.\n"
+                                f"Pay here:\n{url}\n\nI'll message you as soon as payment is confirmed.")
                 return
             except Exception:
                 log.exception("Could not create checkout")
-        self.say(phone, f"{intro}\n\nSubscribe to *{PRODUCT_NAME}* ({price}) to start. Payment is temporarily unavailable, please try again later.")
+        self.say(phone, f"*{PRODUCT_NAME} {plan.name}* ({plan.price_text} for {plan.days} days): payment is "
+                        "temporarily unavailable. Please try again later. 🙏")
 
     def confirm_payment(self, reference: str) -> bool:
-        phone = self.db.complete_payment(reference)
-        if not phone:
+        result = self.db.complete_payment(reference)
+        if not result:
             return False
-        until = self.extend_subscription(phone)
+        phone, plan_key = result
+        until = self.extend_subscription(phone, plan=plan_key)
+        plan = self.plans.get(plan_key, self.plans[STANDARD])
         try:
             self.wa.send_text(
                 phone,
-                f"🎉 Payment received! *{PRODUCT_NAME}* is active until {fmt_time(until.astimezone(self.tz))}.\n\n"
-                "Try it now: *Remind me to call mom at 6:30pm*",
+                f"🎉 Payment received! *{PRODUCT_NAME} {plan.name}* is active until "
+                f"{fmt_time(until.astimezone(self.tz))}.\n\nTry it now: *Remind me to call mom at 6:30pm*",
             )
         except Exception:
             log.exception("Could not send payment confirmation")
@@ -564,7 +641,7 @@ class VividBot:
             "1️⃣ Tell me *what*, *when* and *who* (type or voice note, English or Twi):\n"
             "   _Remind me to call driver Kwame on Friday 1pm_\n"
             "2️⃣ I'll ask for the *vivid description* with all the details.\n"
-            "3️⃣ At that time I send it to you on WhatsApp. If your phone is offline, I send an SMS.\n"
-            "4️⃣ Tap *✅ Done* when you've done it.\n\n"
-            "Commands: *list* (Upcoming / Done / Missed) · *done* · *cancel 3* · *status* · *delete my data*",
+            "3️⃣ At that time I send it to you on WhatsApp, and keep nudging you until you tap *✅ Done*.\n"
+            "   On Premium, if your phone is offline, I also text you by SMS (up to 3 times).\n\n"
+            "Commands: *list* (Upcoming / Done / Missed) · *done* · *cancel 3* · *status* · *premium* · *delete my data*",
         )

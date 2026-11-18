@@ -98,7 +98,7 @@ def env(tmp_path):
         whatsapp=wa,
         ai=FakeAI(),
         transcriber=FakeASR(),
-        payments=Paystack("sk_test_secret", 2000),
+        payments=Paystack("sk_test_secret"),
         sms=sms,
         audio_dir=str(tmp_path / "audio"),
     )
@@ -157,22 +157,27 @@ def test_health_and_meta_verification(env):
 
 def test_unsubscribed_user_is_asked_to_subscribe(env, monkeypatch):
     client, bot, wa = env
-    monkeypatch.setattr(bot.payments, "create_checkout", lambda phone: ("ref-1", "https://pay.example/ref-1"))
+    monkeypatch.setattr(bot.payments, "create_checkout", lambda phone, plan: (f"ref-{plan.key}", f"https://pay.example/{plan.key}"))
     webhook(client, text_msg("Remind me to call mom at 6:30pm"))
-    assert "Vivid Reminders" in wa.last_text() and "https://pay.example/ref-1" in wa.last_text()
+    menu = wa.last_text()
+    assert "Standard*: GHS 30 for 30 days" in menu and "Premium*: GHS 70 for 30 days" in menu and "Reply *1* or *2*" in menu
     assert bot.db.pending_reminders(PHONE) == []
+    webhook(client, text_msg("2"))
+    assert "https://pay.example/premium" in wa.last_text() and "GHS 70" in wa.last_text()
 
 
 def test_paystack_webhook_activates_subscription(env, monkeypatch):
     client, bot, wa = env
-    monkeypatch.setattr(bot.payments, "create_checkout", lambda phone: ("ref-1", "https://pay.example/ref-1"))
+    monkeypatch.setattr(bot.payments, "create_checkout", lambda phone, plan: ("ref-1", "https://pay.example/ref-1"))
     webhook(client, text_msg("hi"))
+    webhook(client, text_msg("premium"))
     body = json.dumps({"event": "charge.success", "data": {"reference": "ref-1"}}).encode()
     assert client.post("/paystack/webhook", data=body, content_type="application/json", headers={"x-paystack-signature": "bad"}).status_code == 401
     sig = hmac.new(b"sk_test_secret", body, hashlib.sha512).hexdigest()
     assert client.post("/paystack/webhook", data=body, content_type="application/json", headers={"x-paystack-signature": sig}).status_code == 200
     assert bot.is_subscribed(bot.db.get_user(PHONE))
-    assert "Payment received" in wa.last_text()
+    assert bot.plan_of(bot.db.get_user(PHONE)) == "premium"
+    assert "Payment received" in wa.last_text() and "Premium" in wa.last_text()
 
 
 def test_typed_reminder_is_rewritten_and_delivered(env):
@@ -188,7 +193,7 @@ def test_typed_reminder_is_rewritten_and_delivered(env):
     assert bot.fire_due() == 0  # not due yet
     make_due(bot)
     assert bot.fire_due() == 1
-    assert wa.last_text().endswith("Time to call mom to ask her if she has taken her medication.")
+    assert "Time to call mom to ask her if she has taken her medication." in wa.last_text()
     assert bot.fire_due() == 0  # never twice
 
 
@@ -245,7 +250,7 @@ def test_who_is_captured_and_reported_form_sent(env):
 
 def test_sms_sent_when_whatsapp_not_delivered_in_time(env):
     client, bot, wa = env
-    bot.extend_subscription(PHONE)
+    bot.extend_subscription(PHONE, plan="premium")
     create_reminder(client)
     make_due(bot)
     bot.tick()
@@ -255,12 +260,20 @@ def test_sms_sent_when_whatsapp_not_delivered_in_time(env):
     assert len(wa.sms.sent) == 1 and wa.sms.sent[0][0] == PHONE
     assert "Time to call mom" in wa.sms.sent[0][1]
     bot.tick()
-    assert len(wa.sms.sent) == 1      # only once
+    assert len(wa.sms.sent) == 1      # next one waits for the schedule (15 min)
+    age_fired(bot, 16)
+    bot.tick()
+    assert len(wa.sms.sent) == 2 and "[reminder 2 of 3]" in wa.sms.sent[1][1]
+    age_fired(bot, 31)
+    bot.tick()
+    age_fired(bot, 90)
+    bot.tick()
+    assert len(wa.sms.sent) == 3      # Premium: at most 3 SMS per reminder
 
 
 def test_no_sms_when_whatsapp_delivered(env):
     client, bot, wa = env
-    bot.extend_subscription(PHONE)
+    bot.extend_subscription(PHONE, plan="premium")
     create_reminder(client)
     make_due(bot)
     bot.tick()
@@ -274,7 +287,7 @@ def test_no_sms_when_whatsapp_delivered(env):
 
 def test_sms_immediately_when_whatsapp_send_fails(env):
     client, bot, wa = env
-    bot.extend_subscription(PHONE)
+    bot.extend_subscription(PHONE, plan="premium")
     create_reminder(client)
     make_due(bot)
     wa.fail = True
@@ -284,7 +297,7 @@ def test_sms_immediately_when_whatsapp_send_fails(env):
 
 def test_sms_when_whatsapp_reports_failed_status(env):
     client, bot, wa = env
-    bot.extend_subscription(PHONE)
+    bot.extend_subscription(PHONE, plan="premium")
     create_reminder(client)
     make_due(bot)
     bot.tick()
@@ -432,15 +445,15 @@ def test_owner_numbers_have_access_without_subscription(tmp_path):
     wa = FakeWhatsApp()
     bot = VividBot(
         db=Database(str(tmp_path / "owner.db")), whatsapp=wa, ai=FakeAI(), transcriber=FakeASR(),
-        payments=Paystack("sk_test_secret", 2000), audio_dir=str(tmp_path / "audio"),
+        payments=Paystack("sk_test_secret"), audio_dir=str(tmp_path / "audio"),
         owner_numbers={PHONE},
     )
     bot.handle_message(text_msg("status"))
-    assert "owner access" in wa.last_text()
+    assert "owner access" in wa.last_text() and "Premium" in wa.last_text()
     bot.handle_message(text_msg("Remind me to call mom at 6:30pm"))
     assert "vivid description" in wa.last_text()
     bot.handle_message({"from": "233200000000", "id": "wamid.stranger", "type": "text", "text": {"body": "hi"}})
-    assert "Subscribe to" in wa.last_text()
+    assert "Choose a Vivid Reminders plan" in wa.last_text()
 
 
 def test_owner_numbers_setting_is_parsed(monkeypatch):
@@ -452,29 +465,31 @@ def test_website_pages_show_price_from_settings_and_whatsapp_link(tmp_path, monk
     monkeypatch.setenv("WHATSAPP_PUBLIC_NUMBER", "+233 20 123 4567")
     bot = VividBot(
         db=Database(str(tmp_path / "t.db")), whatsapp=FakeWhatsApp(), ai=FakeAI(), transcriber=FakeASR(),
-        payments=Paystack("sk_test_secret", 2550), sms=FakeSMS(), audio_dir=str(tmp_path / "audio"),
+        payments=Paystack("sk_test_secret"), sms=FakeSMS(), audio_dir=str(tmp_path / "audio"),
     )
-    settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, price_pesewas=2550,
-                        subscription_days=14, database_path=str(tmp_path / "unused.db"))
+    settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, standard_price_pesewas=2550,
+                        premium_price_pesewas=7500, subscription_days=14, database_path=str(tmp_path / "unused.db"))
     client = create_app(settings, bot=bot, run_async=False).test_client()
 
     home = client.get("/").get_data(as_text=True)
-    assert "English or Twi" in home and "GHS 25.50" in home and "14 days" in home
+    assert "English or Twi" in home and "GHS 25.50" in home and "GHS 75" in home and "14 days" in home
     assert "https://wa.me/233201234567?text=" in home
     for link in ("/how-it-works", "/pricing", "/privacy", "/terms", "/data-deletion"):
         assert f'href="{link}"' in home
 
     pricing = client.get("/pricing").get_data(as_text=True)
-    assert "GHS 25.50" in pricing and "for 14 days" in pricing and "wa.me/233201234567" in pricing
+    assert "GHS 25.50" in pricing and "GHS 75" in pricing and "for 14 days" in pricing and "wa.me/233201234567" in pricing
+    assert "SMS backup up to 3 times" in pricing
     how = client.get("/how-it-works").get_data(as_text=True)
     assert "vivid description" in how and "SMS" in how and "Missed" in how
 
 
-def test_website_uses_test_number_until_public_number_is_set(env, monkeypatch):
+def test_website_uses_vivid_number_and_default_prices(env, monkeypatch):
     client, _, _ = env
     monkeypatch.delenv("WHATSAPP_PUBLIC_NUMBER", raising=False)
-    assert "https://wa.me/15552049961?text=Hi%20VIVID" in client.get("/").get_data(as_text=True)
-    assert "GHS 20</p>" in client.get("/pricing").get_data(as_text=True)
+    assert "https://wa.me/233506281109?text=Hi%20VIVID" in client.get("/").get_data(as_text=True)
+    pricing = client.get("/pricing").get_data(as_text=True)
+    assert "GHS 30</p>" in pricing and "GHS 70</p>" in pricing
 
 
 def test_logo_files_are_served(env):
@@ -484,3 +499,77 @@ def test_logo_files_are_served(env):
         assert response.status_code == 200 and response.data[:8] == b"\x89PNG\r\n\x1a\n"
         response.close()
     assert client.get("/logo-999.png").status_code == 404
+
+
+def test_standard_plan_gets_no_sms_backup(env):
+    client, bot, wa = env
+    bot.extend_subscription(PHONE)                      # Standard by default
+    create_reminder(client)
+    make_due(bot)
+    wa.fail = True                                      # WhatsApp can't deliver at all
+    bot.tick()
+    wa.fail = False
+    age_fired(bot, 60)
+    bot.tick()
+    assert wa.sms.sent == []
+
+
+def test_nudges_repeat_until_done(env):
+    client, bot, wa = env
+    bot.extend_subscription(PHONE)
+    create_reminder(client)
+    make_due(bot)
+    bot.tick()
+    status_update(client, f"wamid.out.{len(wa.sent)}", "delivered")
+    sent_before = len(wa.sent)
+    bot.tick()
+    assert len(wa.sent) == sent_before                  # not yet: nudge interval is 10 minutes
+
+    def age_last_sent(minutes):
+        bot.db._exec("UPDATE reminders SET last_sent_at = ?", (iso(utcnow() - timedelta(minutes=minutes)),))
+
+    age_last_sent(11)
+    bot.tick()
+    assert "nudge" in wa.last_text() and "Time to call mom" in wa.last_text()
+    assert bot.db.get_reminder(1)["nudge_count"] == 1
+    webhook(client, text_msg("done"))
+    assert bot.db.get_reminder(1)["outcome"] == "done"
+    after_done = len(wa.sent)
+    age_last_sent(30)
+    bot.tick()
+    assert len(wa.sent) == after_done                   # no more nudges once Done
+
+
+def test_nudges_stop_after_max_repeats(env):
+    client, bot, wa = env
+    bot.nudge_max = 2
+    bot.extend_subscription(PHONE)
+    create_reminder(client)
+    make_due(bot)
+    bot.tick()
+    status_update(client, f"wamid.out.{len(wa.sent)}", "delivered")
+    for _ in range(5):
+        bot.db._exec("UPDATE reminders SET last_sent_at = ?", (iso(utcnow() - timedelta(minutes=11)),))
+        bot.tick()
+    assert bot.db.get_reminder(1)["nudge_count"] == 2
+
+
+def test_status_shows_plan_and_upgrade_offer(env, monkeypatch):
+    client, bot, wa = env
+    monkeypatch.setattr(bot.payments, "create_checkout", lambda phone, plan: ("ref-up", "https://pay.example/up"))
+    bot.extend_subscription(PHONE)
+    webhook(client, text_msg("status"))
+    assert "*Standard* subscription" in wa.last_text() and "Reply *premium*" in wa.last_text()
+    webhook(client, text_msg("upgrade"))
+    assert "Premium" in wa.last_text() and "https://pay.example/up" in wa.last_text()
+
+
+def test_admin_can_grant_premium(env):
+    client, bot, _ = env
+    r = client.post("/admin/subscribers", json={"phone": PHONE, "days": 7, "plan": "premium"},
+                    headers={"X-Admin-Token": "admin-token"})
+    assert r.status_code == 200 and r.get_json()["plan"] == "premium"
+    assert bot.plan_of(bot.db.get_user(PHONE)) == "premium"
+    bad = client.post("/admin/subscribers", json={"phone": PHONE, "plan": "gold"},
+                      headers={"X-Admin-Token": "admin-token"})
+    assert bad.status_code == 400

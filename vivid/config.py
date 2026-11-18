@@ -49,15 +49,30 @@ class Settings:
 
     # Subscriptions (Paystack, supports Ghana mobile money)
     paystack_secret: str = field(default_factory=lambda: os.environ.get("PAYSTACK_SECRET_KEY", ""))
-    price_pesewas: int = field(default_factory=lambda: int(os.environ.get("SUBSCRIPTION_PRICE_PESEWAS", "2000")))
+    # Plans (pesewas: 3000 = GHS 30). Premium adds SMS backup.
+    standard_price_pesewas: int = field(default_factory=lambda: int(os.environ.get("STANDARD_PRICE_PESEWAS", "3000")))
+    premium_price_pesewas: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_PRICE_PESEWAS", "7000")))
     subscription_days: int = field(default_factory=lambda: int(os.environ.get("SUBSCRIPTION_DAYS", "30")))
+    premium_sms_backups: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_SMS_BACKUPS", "3")))
+    # Minutes after the reminder time at which each Premium SMS backup goes out (if still undelivered).
+    sms_schedule_minutes: tuple = field(default_factory=lambda: tuple(
+        int(x) for x in os.environ.get("SMS_SCHEDULE_MINUTES", "5,15,30").split(",") if x.strip()
+    ))
+    # Nudge: re-send a delivered reminder every N minutes until Done, at most this many extra times.
+    nudge_interval_minutes: int = field(default_factory=lambda: int(os.environ.get("NUDGE_INTERVAL_MINUTES", "10")))
+    nudge_max_repeats: int = field(default_factory=lambda: int(os.environ.get("NUDGE_MAX_REPEATS", "6")))
+
+    @property
+    def plans(self):
+        from .plans import build_plans
+
+        return build_plans(self.standard_price_pesewas, self.premium_price_pesewas,
+                           self.subscription_days, self.premium_sms_backups)
     public_base_url: str = field(default_factory=lambda: os.environ.get("PUBLIC_BASE_URL", ""))
 
     # SMS fallback (Arkesel)
     arkesel_api_key: str = field(default_factory=lambda: os.environ.get("ARKESEL_API_KEY", ""))
     sms_sender: str = field(default_factory=lambda: os.environ.get("SMS_SENDER_ID", "VIVID"))
-    # Send an SMS if WhatsApp hasn't reached the phone this many minutes after the reminder fired.
-    sms_fallback_minutes: int = field(default_factory=lambda: int(os.environ.get("SMS_FALLBACK_MINUTES", "5")))
     # A fired reminder not marked Done within this many minutes becomes Missed.
     missed_after_minutes: int = field(default_factory=lambda: int(os.environ.get("MISSED_AFTER_MINUTES", "120")))
 

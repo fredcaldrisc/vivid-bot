@@ -62,7 +62,12 @@ REMINDER_MIGRATIONS = {
     "sms_sent_at": "TEXT",
     "outcome": "TEXT",          # done | missed (NULL while upcoming or waiting)
     "outcome_at": "TEXT",
+    "sms_count": "INTEGER NOT NULL DEFAULT 0",   # SMS backups sent for this reminder
+    "nudge_count": "INTEGER NOT NULL DEFAULT 0",   # extra WhatsApp repeats sent (until Done)
+    "last_sent_at": "TEXT",                      # last time the reminder went out on WhatsApp
 }
+USER_MIGRATIONS = {"plan": "TEXT"}               # standard | premium
+PAYMENT_MIGRATIONS = {"plan": "TEXT"}
 DELIVERY_RANK = {"failed": 0, "sent": 1, "delivered": 2, "read": 3}
 
 
@@ -86,10 +91,12 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
-        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(reminders)")}
-        for column, kind in REMINDER_MIGRATIONS.items():
-            if column not in existing:
-                self._conn.execute(f"ALTER TABLE reminders ADD COLUMN {column} {kind}")
+        for table, migrations in (("reminders", REMINDER_MIGRATIONS), ("users", USER_MIGRATIONS),
+                                  ("payments", PAYMENT_MIGRATIONS)):
+            existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            for column, kind in migrations.items():
+                if column not in existing:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         self._lock = RLock()
 
     def _exec(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -132,9 +139,12 @@ class Database:
             (state, json.dumps(draft) if draft is not None else None, phone),
         )
 
-    def set_subscribed_until(self, phone: str, until: datetime) -> None:
+    def set_subscribed_until(self, phone: str, until: datetime, plan: str | None = None) -> None:
         self.get_or_create_user(phone)
-        self._exec("UPDATE users SET subscribed_until = ? WHERE phone = ?", (iso(until), phone))
+        self._exec(
+            "UPDATE users SET subscribed_until = ?, plan = COALESCE(?, plan) WHERE phone = ?",
+            (iso(until), plan, phone),
+        )
 
     # ---- reminders ----
     def add_reminder(self, **fields) -> int:
@@ -185,10 +195,11 @@ class Database:
     def set_reminder_status(self, reminder_id: int, status: str, error: str | None = None) -> None:
         sent_at = iso(utcnow()) if status == "sent" else None
         fired_at = iso(utcnow()) if status in ("sent", "awaiting_play", "failed") else None
+        last_sent = iso(utcnow()) if status in ("sent", "awaiting_play") else None
         self._exec(
             "UPDATE reminders SET status = ?, error = ?, sent_at = COALESCE(?, sent_at),"
-            " fired_at = COALESCE(fired_at, ?) WHERE id = ?",
-            (status, error, sent_at, fired_at, reminder_id),
+            " fired_at = COALESCE(fired_at, ?), last_sent_at = COALESCE(?, last_sent_at) WHERE id = ?",
+            (status, error, sent_at, fired_at, last_sent, reminder_id),
         )
 
     # ---- WhatsApp delivery tracking ----
@@ -218,24 +229,44 @@ class Database:
                 self._conn.execute("UPDATE reminders SET delivery = ? WHERE id = ?", (status, row["id"]))
             return self.get_reminder(row["id"])
 
-    def needing_sms(self, fired_before: datetime) -> list[dict]:
-        """Fired reminders that WhatsApp hasn't delivered to the phone in time."""
+    def undelivered_open(self, max_sms: int) -> list[dict]:
+        """Fired, not yet Done/Missed reminders that WhatsApp hasn't delivered to the phone,
+        and that still have SMS backups left."""
         rows = self._exec(
-            "SELECT * FROM reminders WHERE sms_sent_at IS NULL AND fired_at IS NOT NULL AND fired_at <= ?"
-            " AND status IN ('sent', 'awaiting_play', 'failed')"
+            "SELECT * FROM reminders WHERE fired_at IS NOT NULL AND outcome IS NULL"
+            " AND status IN ('sent', 'awaiting_play', 'failed') AND sms_count < ?"
             " AND COALESCE(delivery, 'none') NOT IN ('delivered', 'read')",
-            (iso(fired_before),),
+            (max_sms,),
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def claim_sms(self, reminder_id: int) -> bool:
+    def claim_sms(self, reminder_id: int, expected_count: int) -> bool:
+        """Reserves the next SMS backup so it is sent once, even if two ticks overlap."""
         cur = self._exec(
-            "UPDATE reminders SET sms_sent_at = ? WHERE id = ? AND sms_sent_at IS NULL", (iso(utcnow()), reminder_id)
+            "UPDATE reminders SET sms_count = sms_count + 1, sms_sent_at = ? WHERE id = ? AND sms_count = ?",
+            (iso(utcnow()), reminder_id, expected_count),
         )
         return cur.rowcount == 1
 
     def release_sms(self, reminder_id: int) -> None:
-        self._exec("UPDATE reminders SET sms_sent_at = NULL WHERE id = ?", (reminder_id,))
+        self._exec("UPDATE reminders SET sms_count = MAX(sms_count - 1, 0) WHERE id = ?", (reminder_id,))
+
+    # ---- nudge: repeat delivered reminders until Done ----
+    def nudge_due(self, sent_before: datetime, max_repeats: int) -> list[dict]:
+        """Reminders that reached the phone, aren't Done yet, and were last sent long enough ago."""
+        rows = self._exec(
+            "SELECT * FROM reminders WHERE status = 'sent' AND outcome IS NULL AND nudge_count < ?"
+            " AND delivery IN ('delivered', 'read') AND last_sent_at IS NOT NULL AND last_sent_at <= ?",
+            (max_repeats, iso(sent_before)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def claim_nudge(self, reminder_id: int, expected_count: int) -> bool:
+        cur = self._exec(
+            "UPDATE reminders SET nudge_count = nudge_count + 1, last_sent_at = ? WHERE id = ? AND nudge_count = ?",
+            (iso(utcnow()), reminder_id, expected_count),
+        )
+        return cur.rowcount == 1
 
     # ---- Done / Missed / Upcoming ----
     def set_outcome(self, phone: str, reminder_id: int, outcome: str) -> bool:
@@ -290,19 +321,20 @@ class Database:
             return paths
 
     # ---- payments ----
-    def add_payment(self, reference: str, phone: str) -> None:
+    def add_payment(self, reference: str, phone: str, plan: str = "standard") -> None:
         self._exec(
-            "INSERT OR IGNORE INTO payments (reference, phone, status, created_at) VALUES (?, ?, 'initialized', ?)",
-            (reference, phone, iso(utcnow())),
+            "INSERT OR IGNORE INTO payments (reference, phone, status, created_at, plan)"
+            " VALUES (?, ?, 'initialized', ?, ?)",
+            (reference, phone, iso(utcnow()), plan),
         )
 
-    def complete_payment(self, reference: str) -> str | None:
-        """Marks a payment paid once; returns the phone, or None if unknown/already paid."""
+    def complete_payment(self, reference: str) -> tuple[str, str] | None:
+        """Marks a payment paid once; returns (phone, plan), or None if unknown/already paid."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT phone, status FROM payments WHERE reference = ?", (reference,)
+                "SELECT phone, status, plan FROM payments WHERE reference = ?", (reference,)
             ).fetchone()
             if not row or row["status"] == "paid":
                 return None
             self._conn.execute("UPDATE payments SET status = 'paid' WHERE reference = ?", (reference,))
-            return row["phone"]
+            return row["phone"], row["plan"] or "standard"
