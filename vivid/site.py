@@ -49,8 +49,6 @@ SMS_FEATURE = ("📶 SMS backup (Premium)", "If WhatsApp can't reach your phone,
 
 def _plans_summary(plans: dict, premium_enabled: bool) -> str:
     std, pre = plans["standard"], plans["premium"]
-    if not premium_enabled:
-        return f"<b>{std.name}</b>: {std.price_text} for {std.days} days. <b>{pre.name}</b> is coming soon"
     return (f"<b>{std.name}</b> {std.price_text} for {std.days} days, or <b>{pre.name}</b> "
             f"{pre.price_text} for {pre.days} days with SMS backup")
 
@@ -62,7 +60,7 @@ def home_page(plans: dict, premium_enabled: bool = True) -> str:
   <p>{BOT_NAME} reminds you on WhatsApp at exactly the right time, in English or Twi, by text or voice note.</p>
   {_wa_button()}<a class="btn btn-ghost" href="/how-it-works">How it works</a>
 </div></section>"""
-    features = FEATURES[:5] + ([SMS_FEATURE] if premium_enabled else []) + FEATURES[5:]
+    features = FEATURES[:5] + [SMS_FEATURE] + FEATURES[5:]
     cards = "\n".join(f'<li class="card"><h3>{t}</h3><p>{d}</p></li>' for t, d in features)
     main = f"""<h2>What {BOT_NAME} does</h2>
 <ul class="cards">
@@ -130,16 +128,22 @@ def _plan_card(plan, number: int) -> str:
 def pricing_page(plans: dict, premium_enabled: bool = True) -> str:
     std, pre = plans["standard"], plans["premium"]
     if not premium_enabled:
+        premium_items = "\n".join(f"    <li>{escape(f)}</li>" for f in pre.features)
         main = f"""<h1>Pricing</h1>
-<p class="muted">One simple plan. No app, no contract.</p>
-<div class="cards">
+<p class="muted">No app, no contract.</p>
+<style>
+  .premium-info {{ margin-top: 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+                  padding: .9rem 1.2rem; }}
+  .premium-info summary {{ cursor: pointer; font-weight: 700; list-style-position: inside; }}
+  .premium-info ul {{ margin: .75rem 0 .25rem; }}
+</style>
 {_plan_card(std, 1)}
-<div class="price">
-  <p class="muted">{PRODUCT_NAME} {escape(pre.name)}</p>
-  <p class="amount">Coming soon</p>
-  <p class="muted">More days, SMS backup when WhatsApp can't reach you, and team plans.</p>
-</div>
-</div>
+<details class="premium-info">
+  <summary>{PRODUCT_NAME} {escape(pre.name)}: {pre.price_text} for {pre.days} days</summary>
+  <ul>
+{premium_items}
+  </ul>
+</details>
 <h2>How do I pay?</h2>
 <p>Message {BOT_NAME} on WhatsApp and reply <b>1</b>. {BOT_NAME} sends you a secure Paystack link where you pay
 with mobile money or card, and confirms on WhatsApp as soon as the payment goes through.</p>

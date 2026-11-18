@@ -161,7 +161,7 @@ class VividBot:
         if not self.is_subscribed(user):
             choice = parse_choice(command)
             if choice == PREMIUM and not self.premium_enabled:
-                self._say_premium_soon(phone)
+                self._describe_premium(phone, subscribed=False)
             elif choice:
                 self._send_checkout(phone, choice)
             else:
@@ -189,7 +189,7 @@ class VividBot:
             if self.premium_enabled:
                 self._send_checkout(phone, PREMIUM)
             else:
-                self._say_premium_soon(phone)
+                self._describe_premium(phone, subscribed=True)
             return
         if command in LIST_WORDS:
             self._send_list(phone)
@@ -523,19 +523,28 @@ class VividBot:
         self.db.set_subscribed_until(phone, until, plan)
         return until
 
-    def _say_premium_soon(self, phone: str) -> None:
-        std = self.plans[STANDARD]
-        self.say(phone, f"✨ *{PRODUCT_NAME} Premium* is coming soon. For now, *{std.name}* "
-                        f"({std.price_text} for {std.days} days) gives you WhatsApp reminders that keep nudging "
-                        "you until you tap Done. Reply *1* to get it.")
+    def _premium_line(self) -> str:
+        std, pre = self.plans[STANDARD], self.plans[PREMIUM]
+        more = f" for {pre.days - std.days} more days" if pre.days > std.days else ""
+        return f"Everything in {std.name}{more} + SMS backup (up to {pre.sms_backups}x) when WhatsApp can't reach you"
+
+    def _describe_premium(self, phone: str, subscribed: bool) -> None:
+        """While Premium isn't on sale: describe it, without offering to buy it."""
+        std, pre = self.plans[STANDARD], self.plans[PREMIUM]
+        tail = (f"You're on *{std.name}*." if subscribed
+                else f"Reply *1* to subscribe to *{std.name}* ({std.price_text} for {std.days} days).")
+        self.say(phone, f"✨ *{PRODUCT_NAME} {pre.name}*: {pre.price_text} for {pre.days} days\n"
+                        f"{self._premium_line()}.\n\n{tail}")
 
     def _plan_menu(self) -> str:
         std, pre = self.plans[STANDARD], self.plans[PREMIUM]
         if not self.premium_enabled:
             return (
-                f"*{std.name}*: {std.price_text} for {std.days} days\n"
+                f"1️⃣ *{std.name}*: {std.price_text} for {std.days} days\n"
                 "   Reminders on WhatsApp (text or voice, English or Twi), repeated until you tap Done\n\n"
-                "Reply *1* to get your payment link (mobile money or card)."
+                f"✨ *{pre.name}*: {pre.price_text} for {pre.days} days\n"
+                f"   {self._premium_line()}\n\n"
+                f"Reply *1* to subscribe to {std.name} (mobile money or card)."
             )
         return (
             f"1️⃣ *{std.name}*: {std.price_text} for {std.days} days\n"

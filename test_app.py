@@ -586,19 +586,24 @@ def test_launch_mode_offers_standard_only(tmp_path, monkeypatch):
     monkeypatch.setattr(bot.payments, "create_checkout", lambda phone, plan: (f"ref-{plan.key}", f"https://pay.example/{plan.key}"))
     bot.handle_message(text_msg("hi"))
     menu = wa.last_text()
-    assert "Standard*: GHS 30 for 20 days" in menu and "Reply *1*" in menu and "Premium" not in menu
+    assert "Standard*: GHS 30 for 20 days" in menu and "Reply *1*" in menu
+    assert "Premium*: GHS 70 for 30 days" in menu and "Reply *2*" not in menu    # listed, not buyable
     bot.handle_message(text_msg("2"))
-    assert "coming soon" in wa.last_text()
+    reply = wa.last_text()
+    assert "Premium*: GHS 70 for 30 days" in reply and "SMS backup" in reply and "Reply *1*" in reply
+    assert "coming soon" not in reply.lower() and "pay.example" not in reply
     bot.handle_message(text_msg("1"))
     assert "https://pay.example/standard" in wa.last_text()
     bot.extend_subscription(PHONE)
     bot.handle_message(text_msg("status"))
     assert "*Standard* subscription" in wa.last_text() and "premium" not in wa.last_text().lower()
     bot.handle_message(text_msg("upgrade"))
-    assert "coming soon" in wa.last_text()
+    reply = wa.last_text()
+    assert "SMS backup" in reply and "You're on *Standard*" in reply
+    assert "coming soon" not in reply.lower() and "pay.example" not in reply
 
 
-def test_launch_mode_website_shows_premium_coming_soon(tmp_path, monkeypatch):
+def test_launch_mode_website_lists_premium_without_selling_it(tmp_path, monkeypatch):
     monkeypatch.delenv("PREMIUM_ENABLED", raising=False)
     settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, database_path=str(tmp_path / "unused.db"))
     assert settings.premium_enabled is False
@@ -608,6 +613,9 @@ def test_launch_mode_website_shows_premium_coming_soon(tmp_path, monkeypatch):
     )
     client = create_app(settings, bot=bot, run_async=False).test_client()
     pricing = client.get("/pricing").get_data(as_text=True)
-    assert "GHS 30</p>" in pricing and "for 20 days" in pricing and "Coming soon" in pricing and "GHS 70" not in pricing
+    assert "GHS 30</p>" in pricing and "for 20 days" in pricing
+    assert "<details" in pricing and "Premium: GHS 70 for 30 days</summary>" in pricing   # tap to read
+    assert "Get Premium" not in pricing and "reply <b>2</b>" not in pricing.lower()      # not buyable yet
     home = client.get("/").get_data(as_text=True)
-    assert "coming soon" in home and "SMS backup (Premium)" not in home
+    for page in (pricing, home):
+        assert "coming soon" not in page.lower()
