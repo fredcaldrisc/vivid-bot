@@ -70,6 +70,7 @@ def build_bot(settings: Settings) -> VividBot:
         payments=Paystack(settings.paystack_secret, callback),
         sms=ArkeselSMS(settings.arkesel_api_key, settings.sms_sender),
         plans=settings.plans,
+        premium_enabled=settings.premium_enabled,
         sms_schedule_minutes=settings.sms_schedule_minutes,
         nudge_interval_minutes=settings.nudge_interval_minutes,
         nudge_max_repeats=settings.nudge_max_repeats,
@@ -115,7 +116,7 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
     # Public website. Prices and lengths come from STANDARD_/PREMIUM_PRICE_PESEWAS and STANDARD_/PREMIUM_DAYS.
     @app.get("/")
     def home():
-        return site.home_page(settings.plans)
+        return site.home_page(settings.plans, settings.premium_enabled)
 
     @app.get("/how-it-works")
     def how_it_works():
@@ -123,7 +124,7 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
 
     @app.get("/pricing")
     def pricing():
-        return site.pricing_page(settings.plans)
+        return site.pricing_page(settings.plans, settings.premium_enabled)
 
     @app.get("/logo.png")
     @app.get("/logo-<size>.png")

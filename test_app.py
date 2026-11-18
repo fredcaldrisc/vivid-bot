@@ -105,7 +105,7 @@ def env(tmp_path):
     wa.sms = sms
     settings = Settings(
         verify_token="verify-me", app_secret="app-secret", admin_token="admin-token",
-        run_scheduler=False, database_path=str(tmp_path / "unused.db"),
+        run_scheduler=False, database_path=str(tmp_path / "unused.db"), premium_enabled=True,
     )
     app = create_app(settings, bot=bot, run_async=False)
     return app.test_client(), bot, wa
@@ -468,7 +468,8 @@ def test_website_pages_show_price_from_settings_and_whatsapp_link(tmp_path, monk
         payments=Paystack("sk_test_secret"), sms=FakeSMS(), audio_dir=str(tmp_path / "audio"),
     )
     settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, standard_price_pesewas=2550,
-                        premium_price_pesewas=7500, standard_days=14, premium_days=31, database_path=str(tmp_path / "unused.db"))
+                        premium_price_pesewas=7500, standard_days=14, premium_days=31, database_path=str(tmp_path / "unused.db"),
+                        premium_enabled=True)
     client = create_app(settings, bot=bot, run_async=False).test_client()
 
     home = client.get("/").get_data(as_text=True)
@@ -573,3 +574,40 @@ def test_admin_can_grant_premium(env):
     bad = client.post("/admin/subscribers", json={"phone": PHONE, "plan": "gold"},
                       headers={"X-Admin-Token": "admin-token"})
     assert bad.status_code == 400
+
+
+def test_launch_mode_offers_standard_only(tmp_path, monkeypatch):
+    wa = FakeWhatsApp()
+    bot = VividBot(
+        db=Database(str(tmp_path / "launch.db")), whatsapp=wa, ai=FakeAI(), transcriber=FakeASR(),
+        payments=Paystack("sk_test_secret"), sms=FakeSMS(), audio_dir=str(tmp_path / "audio"),
+        premium_enabled=False,
+    )
+    monkeypatch.setattr(bot.payments, "create_checkout", lambda phone, plan: (f"ref-{plan.key}", f"https://pay.example/{plan.key}"))
+    bot.handle_message(text_msg("hi"))
+    menu = wa.last_text()
+    assert "Standard*: GHS 30 for 20 days" in menu and "Reply *1*" in menu and "Premium" not in menu
+    bot.handle_message(text_msg("2"))
+    assert "coming soon" in wa.last_text()
+    bot.handle_message(text_msg("1"))
+    assert "https://pay.example/standard" in wa.last_text()
+    bot.extend_subscription(PHONE)
+    bot.handle_message(text_msg("status"))
+    assert "*Standard* subscription" in wa.last_text() and "premium" not in wa.last_text().lower()
+    bot.handle_message(text_msg("upgrade"))
+    assert "coming soon" in wa.last_text()
+
+
+def test_launch_mode_website_shows_premium_coming_soon(tmp_path, monkeypatch):
+    monkeypatch.delenv("PREMIUM_ENABLED", raising=False)
+    settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, database_path=str(tmp_path / "unused.db"))
+    assert settings.premium_enabled is False
+    bot = VividBot(
+        db=Database(str(tmp_path / "site.db")), whatsapp=FakeWhatsApp(), ai=FakeAI(), transcriber=FakeASR(),
+        payments=Paystack("sk_test_secret"), audio_dir=str(tmp_path / "audio"), premium_enabled=False,
+    )
+    client = create_app(settings, bot=bot, run_async=False).test_client()
+    pricing = client.get("/pricing").get_data(as_text=True)
+    assert "GHS 30</p>" in pricing and "for 20 days" in pricing and "Coming soon" in pricing and "GHS 70" not in pricing
+    home = client.get("/").get_data(as_text=True)
+    assert "coming soon" in home and "SMS backup (Premium)" not in home

@@ -54,6 +54,8 @@ class Settings:
     premium_price_pesewas: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_PRICE_PESEWAS", "7000")))
     standard_days: int = field(default_factory=lambda: int(os.environ.get("STANDARD_DAYS", "20")))
     premium_days: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_DAYS", "30")))
+    # Launch with Standard only; set PREMIUM_ENABLED=true when Premium is ready to sell.
+    premium_enabled: bool = field(default_factory=lambda: _bool("PREMIUM_ENABLED", "false"))
     premium_sms_backups: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_SMS_BACKUPS", "3")))
     # Minutes after the reminder time at which each Premium SMS backup goes out (if still undelivered).
     sms_schedule_minutes: tuple = field(default_factory=lambda: tuple(

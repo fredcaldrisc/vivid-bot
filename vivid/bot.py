@@ -73,6 +73,7 @@ class VividBot:
         nudge_max_repeats: int = 6,
         missed_after_minutes: int = 120,
         owner_numbers: frozenset | set | tuple = (),
+        premium_enabled: bool = True,
     ):
         self.db = db
         self.wa = whatsapp
@@ -90,6 +91,7 @@ class VividBot:
         self.nudge_max = nudge_max_repeats
         self.missed_after = timedelta(minutes=missed_after_minutes)
         self.owner_numbers = frozenset(owner_numbers)
+        self.premium_enabled = premium_enabled
         self._locks: defaultdict[str, Lock] = defaultdict(Lock)
 
     # ------------------------------------------------------------------ inbound
@@ -158,7 +160,9 @@ class VividBot:
 
         if not self.is_subscribed(user):
             choice = parse_choice(command)
-            if choice:
+            if choice == PREMIUM and not self.premium_enabled:
+                self._say_premium_soon(phone)
+            elif choice:
                 self._send_checkout(phone, choice)
             else:
                 self._send_subscribe(phone, first_time=user["subscribed_until"] is None)
@@ -175,14 +179,17 @@ class VividBot:
             plan = self.plans[self.plan_of(user)]
             until = parse_iso(user["subscribed_until"]).astimezone(self.tz)
             upsell = ""
-            if plan.key == STANDARD:
+            if plan.key == STANDARD and self.premium_enabled:
                 premium = self.plans[PREMIUM]
                 upsell = (f"\n\nWant {premium.days} days instead of {plan.days}, plus SMS backup when WhatsApp "
                           f"can't reach you? Reply *premium* to upgrade ({premium.price_text} for {premium.days} days).")
             self.say(phone, f"✅ Your *{plan.name}* subscription is active until {fmt_time(until)}.{upsell}")
             return
         if command in UPGRADE_WORDS:
-            self._send_checkout(phone, PREMIUM)
+            if self.premium_enabled:
+                self._send_checkout(phone, PREMIUM)
+            else:
+                self._say_premium_soon(phone)
             return
         if command in LIST_WORDS:
             self._send_list(phone)
@@ -516,8 +523,20 @@ class VividBot:
         self.db.set_subscribed_until(phone, until, plan)
         return until
 
+    def _say_premium_soon(self, phone: str) -> None:
+        std = self.plans[STANDARD]
+        self.say(phone, f"✨ *{PRODUCT_NAME} Premium* is coming soon. For now, *{std.name}* "
+                        f"({std.price_text} for {std.days} days) gives you WhatsApp reminders that keep nudging "
+                        "you until you tap Done. Reply *1* to get it.")
+
     def _plan_menu(self) -> str:
         std, pre = self.plans[STANDARD], self.plans[PREMIUM]
+        if not self.premium_enabled:
+            return (
+                f"*{std.name}*: {std.price_text} for {std.days} days\n"
+                "   Reminders on WhatsApp (text or voice, English or Twi), repeated until you tap Done\n\n"
+                "Reply *1* to get your payment link (mobile money or card)."
+            )
         return (
             f"1️⃣ *{std.name}*: {std.price_text} for {std.days} days\n"
             "   Reminders on WhatsApp, repeated until you tap Done\n"
@@ -535,7 +554,8 @@ class VividBot:
             if first_time
             else f"Your *{PRODUCT_NAME}* subscription has expired."
         )
-        self.say(phone, f"{intro}\n\nChoose a {PRODUCT_NAME} plan:\n{self._plan_menu()}")
+        heading = f"Choose a {PRODUCT_NAME} plan:" if self.premium_enabled else f"Subscribe to {PRODUCT_NAME}:"
+        self.say(phone, f"{intro}\n\n{heading}\n{self._plan_menu()}")
 
     def _send_checkout(self, phone: str, plan_key: str) -> None:
         plan = self.plans[plan_key]
@@ -644,6 +664,9 @@ class VividBot:
             "   _Remind me to call driver Kwame on Friday 1pm_\n"
             "2️⃣ I'll ask for the *vivid description* with all the details.\n"
             "3️⃣ At that time I send it to you on WhatsApp, and keep nudging you until you tap *✅ Done*.\n"
-            "   On Premium, if your phone is offline, I also text you by SMS (up to 3 times).\n\n"
-            "Commands: *list* (Upcoming / Done / Missed) · *done* · *cancel 3* · *status* · *premium* · *delete my data*",
+            + ("   On Premium, if your phone is offline, I also text you by SMS (up to 3 times).\n\n"
+               if self.premium_enabled else "\n")
+            + "Commands: *list* (Upcoming / Done / Missed) · *done* · *cancel 3* · *status* · "
+            + ("*premium* · " if self.premium_enabled else "")
+            + "*delete my data*",
         )
