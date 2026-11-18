@@ -84,7 +84,7 @@ class VividBot:
         self.audio_dir = Path(audio_dir)
         self.template_name = template_name
         self.template_lang = template_lang
-        self.plans = plans or build_plans(3000, 7000, 30, 3)
+        self.plans = plans or build_plans(3000, 7000, 20, 30, 3)
         self.sms_schedule = [timedelta(minutes=m) for m in sms_schedule_minutes] or [timedelta(minutes=5)]
         self.nudge_interval = timedelta(minutes=nudge_interval_minutes)
         self.nudge_max = nudge_max_repeats
@@ -177,8 +177,8 @@ class VividBot:
             upsell = ""
             if plan.key == STANDARD:
                 premium = self.plans[PREMIUM]
-                upsell = (f"\n\nWant SMS backup when WhatsApp can't reach you? Reply *premium* to upgrade "
-                          f"({premium.price_text} for {premium.days} days).")
+                upsell = (f"\n\nWant {premium.days} days instead of {plan.days}, plus SMS backup when WhatsApp "
+                          f"can't reach you? Reply *premium* to upgrade ({premium.price_text} for {premium.days} days).")
             self.say(phone, f"✅ Your *{plan.name}* subscription is active until {fmt_time(until)}.{upsell}")
             return
         if command in UPGRADE_WORDS:
@@ -522,7 +522,9 @@ class VividBot:
             f"1️⃣ *{std.name}*: {std.price_text} for {std.days} days\n"
             "   Reminders on WhatsApp, repeated until you tap Done\n"
             f"2️⃣ *{pre.name}*: {pre.price_text} for {pre.days} days\n"
-            f"   Everything in {std.name} + SMS backup (up to {pre.sms_backups}x) when WhatsApp can't reach you\n\n"
+            f"   Everything in {std.name}"
+            + (f" for {pre.days - std.days} more days" if pre.days > std.days else "")
+            + f" + SMS backup (up to {pre.sms_backups}x) when WhatsApp can't reach you\n\n"
             "Reply *1* or *2* to get your payment link (mobile money or card)."
         )
 

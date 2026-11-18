@@ -112,7 +112,7 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
         token = request.headers.get("X-Admin-Token", "")
         return bool(settings.admin_token) and hmac.compare_digest(settings.admin_token, token)
 
-    # Public website. Prices come from STANDARD_PRICE_PESEWAS / PREMIUM_PRICE_PESEWAS / SUBSCRIPTION_DAYS.
+    # Public website. Prices and lengths come from STANDARD_/PREMIUM_PRICE_PESEWAS and STANDARD_/PREMIUM_DAYS.
     @app.get("/")
     def home():
         return site.home_page(settings.plans)
@@ -208,7 +208,7 @@ def create_app(settings: Settings | None = None, bot: VividBot | None = None, ru
         plan = str(body.get("plan") or "standard").lower()
         if plan not in settings.plans:
             return jsonify(error="plan must be 'standard' or 'premium'"), 400
-        until = bot.extend_subscription(phone, int(body.get("days") or settings.subscription_days), plan)
+        until = bot.extend_subscription(phone, int(body.get("days") or 0) or None, plan)
         return jsonify(phone=phone, plan=plan, subscribed_until=until.isoformat()), 200
 
     missing = [name for name, value in [

@@ -49,8 +49,8 @@ FEATURES = [
 
 def _plans_summary(plans: dict) -> str:
     std, pre = plans["standard"], plans["premium"]
-    return (f"<b>{std.name}</b> {std.price_text} or <b>{pre.name}</b> {pre.price_text} "
-            f"(with SMS backup) for {std.days} days")
+    return (f"<b>{std.name}</b> {std.price_text} for {std.days} days, or <b>{pre.name}</b> "
+            f"{pre.price_text} for {pre.days} days with SMS backup")
 
 
 def home_page(plans: dict) -> str:
@@ -137,6 +137,7 @@ def pricing_page(plans: dict) -> str:
 sends you a secure Paystack link where you pay with mobile money or card, and confirms on WhatsApp as soon as
 the payment goes through. Already on {std.name}? Send <b>premium</b> to upgrade.</p>
 <h2>Can I stop?</h2>
-<p>Yes. Your plan simply ends after {std.days} days unless you pay again. You can also
+<p>Yes. Your plan simply ends after its {std.days} days ({std.name}) or {pre.days} days ({pre.name})
+unless you pay again. You can also
 <a href="/data-deletion">delete all your data</a> at any time.</p>"""
     return layout("Pricing", main)

@@ -52,7 +52,8 @@ class Settings:
     # Plans (pesewas: 3000 = GHS 30). Premium adds SMS backup.
     standard_price_pesewas: int = field(default_factory=lambda: int(os.environ.get("STANDARD_PRICE_PESEWAS", "3000")))
     premium_price_pesewas: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_PRICE_PESEWAS", "7000")))
-    subscription_days: int = field(default_factory=lambda: int(os.environ.get("SUBSCRIPTION_DAYS", "30")))
+    standard_days: int = field(default_factory=lambda: int(os.environ.get("STANDARD_DAYS", "20")))
+    premium_days: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_DAYS", "30")))
     premium_sms_backups: int = field(default_factory=lambda: int(os.environ.get("PREMIUM_SMS_BACKUPS", "3")))
     # Minutes after the reminder time at which each Premium SMS backup goes out (if still undelivered).
     sms_schedule_minutes: tuple = field(default_factory=lambda: tuple(
@@ -67,7 +68,7 @@ class Settings:
         from .plans import build_plans
 
         return build_plans(self.standard_price_pesewas, self.premium_price_pesewas,
-                           self.subscription_days, self.premium_sms_backups)
+                           self.standard_days, self.premium_days, self.premium_sms_backups)
     public_base_url: str = field(default_factory=lambda: os.environ.get("PUBLIC_BASE_URL", ""))
 
     # SMS fallback (Arkesel)

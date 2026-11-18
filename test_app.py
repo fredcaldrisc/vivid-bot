@@ -160,7 +160,7 @@ def test_unsubscribed_user_is_asked_to_subscribe(env, monkeypatch):
     monkeypatch.setattr(bot.payments, "create_checkout", lambda phone, plan: (f"ref-{plan.key}", f"https://pay.example/{plan.key}"))
     webhook(client, text_msg("Remind me to call mom at 6:30pm"))
     menu = wa.last_text()
-    assert "Standard*: GHS 30 for 30 days" in menu and "Premium*: GHS 70 for 30 days" in menu and "Reply *1* or *2*" in menu
+    assert "Standard*: GHS 30 for 20 days" in menu and "Premium*: GHS 70 for 30 days" in menu and "Reply *1* or *2*" in menu
     assert bot.db.pending_reminders(PHONE) == []
     webhook(client, text_msg("2"))
     assert "https://pay.example/premium" in wa.last_text() and "GHS 70" in wa.last_text()
@@ -468,11 +468,11 @@ def test_website_pages_show_price_from_settings_and_whatsapp_link(tmp_path, monk
         payments=Paystack("sk_test_secret"), sms=FakeSMS(), audio_dir=str(tmp_path / "audio"),
     )
     settings = Settings(verify_token="v", app_secret="s", run_scheduler=False, standard_price_pesewas=2550,
-                        premium_price_pesewas=7500, subscription_days=14, database_path=str(tmp_path / "unused.db"))
+                        premium_price_pesewas=7500, standard_days=14, premium_days=31, database_path=str(tmp_path / "unused.db"))
     client = create_app(settings, bot=bot, run_async=False).test_client()
 
     home = client.get("/").get_data(as_text=True)
-    assert "English or Twi" in home and "GHS 25.50" in home and "GHS 75" in home and "14 days" in home
+    assert "English or Twi" in home and "GHS 25.50" in home and "GHS 75" in home and "14 days" in home and "31 days" in home
     assert "https://wa.me/233201234567?text=" in home
     for link in ("/how-it-works", "/pricing", "/privacy", "/terms", "/data-deletion"):
         assert f'href="{link}"' in home
