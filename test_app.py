@@ -426,3 +426,23 @@ def test_ensure_subscribed_links_waba_to_app(monkeypatch):
     assert calls and calls[0].endswith("/555/subscribed_apps") and "subscribed app 777" in first[0]
     second = client.ensure_subscribed()
     assert len(calls) == 1 and "already" in second[0]
+
+
+def test_owner_numbers_have_access_without_subscription(tmp_path):
+    wa = FakeWhatsApp()
+    bot = VividBot(
+        db=Database(str(tmp_path / "owner.db")), whatsapp=wa, ai=FakeAI(), transcriber=FakeASR(),
+        payments=Paystack("sk_test_secret", 2000), audio_dir=str(tmp_path / "audio"),
+        owner_numbers={PHONE},
+    )
+    bot.handle_message(text_msg("status"))
+    assert "owner access" in wa.last_text()
+    bot.handle_message(text_msg("Remind me to call mom at 6:30pm"))
+    assert "vivid description" in wa.last_text()
+    bot.handle_message({"from": "233200000000", "id": "wamid.stranger", "type": "text", "text": {"body": "hi"}})
+    assert "Subscribe to" in wa.last_text()
+
+
+def test_owner_numbers_setting_is_parsed(monkeypatch):
+    monkeypatch.setenv("OWNER_NUMBERS", "+233 54 753 9948, 233201234567")
+    assert Settings().owner_numbers == {"233547539948", "233201234567"}

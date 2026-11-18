@@ -69,6 +69,7 @@ def build_bot(settings: Settings) -> VividBot:
         sms=ArkeselSMS(settings.arkesel_api_key, settings.sms_sender),
         sms_fallback_minutes=settings.sms_fallback_minutes,
         missed_after_minutes=settings.missed_after_minutes,
+        owner_numbers=settings.owner_numbers,
         tz=settings.timezone,
         audio_dir=str(audio_dir),
         template_name=settings.reminder_template,

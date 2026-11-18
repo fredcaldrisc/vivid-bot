@@ -68,6 +68,7 @@ class VividBot:
         subscription_days: int = 30,
         sms_fallback_minutes: int = 5,
         missed_after_minutes: int = 120,
+        owner_numbers: frozenset | set | tuple = (),
     ):
         self.db = db
         self.wa = whatsapp
@@ -82,6 +83,7 @@ class VividBot:
         self.subscription_days = subscription_days
         self.sms_after = timedelta(minutes=sms_fallback_minutes)
         self.missed_after = timedelta(minutes=missed_after_minutes)
+        self.owner_numbers = frozenset(owner_numbers)
         self._locks: defaultdict[str, Lock] = defaultdict(Lock)
 
     # ------------------------------------------------------------------ inbound
@@ -157,6 +159,9 @@ class VividBot:
             return
 
         if command in SUBSCRIBE_WORDS:
+            if phone in self.owner_numbers:
+                self.say(phone, f"✅ You have owner access to {PRODUCT_NAME}: no subscription needed.")
+                return
             until = parse_iso(user["subscribed_until"]).astimezone(self.tz)
             self.say(phone, f"✅ Your {PRODUCT_NAME} subscription is active until {fmt_time(until)}.")
             return
@@ -438,6 +443,8 @@ class VividBot:
 
     # ------------------------------------------------------------ subscriptions
     def is_subscribed(self, user: dict) -> bool:
+        if user.get("phone") in self.owner_numbers:
+            return True
         until = parse_iso(user.get("subscribed_until"))
         return until is not None and until > utcnow()
 

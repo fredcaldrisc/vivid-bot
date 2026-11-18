@@ -63,6 +63,12 @@ class Settings:
 
     # App
     admin_token: str = field(default_factory=lambda: os.environ.get("ADMIN_TOKEN", ""))
+    # WhatsApp numbers (digits only, comma-separated) that always have access without paying,
+    # e.g. the owner's own phone for testing: "233547539948".
+    owner_numbers: frozenset = field(default_factory=lambda: frozenset(
+        "".join(ch for ch in part if ch.isdigit())
+        for part in os.environ.get("OWNER_NUMBERS", "").split(",") if part.strip()
+    ))
     timezone: str = field(default_factory=lambda: os.environ.get("VIVID_TIMEZONE", "Africa/Accra"))
     database_path: str = field(default_factory=lambda: os.environ.get("DATABASE_PATH", str(PROJECT_DIR / "data" / "vivid.db")))
     audio_dir: str = field(default_factory=lambda: os.environ.get("AUDIO_DIR", str(PROJECT_DIR / "data" / "audio")))
